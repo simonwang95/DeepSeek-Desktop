@@ -64,6 +64,7 @@ pub struct HarnessStatus {
     pub dependencies: Vec<DependencyStatus>,
     pub build_artifacts_present: Option<bool>,
     pub service_running: bool,
+    pub service_ready: bool,
     pub orphaned_process: bool,
     pub pid: Option<u32>,
     pub port: Option<u16>,
@@ -174,13 +175,27 @@ impl Default for AppConfig {
                 repo_url: "https://github.com/deepseek-ai/deepseek-harness.git".into(),
                 branch: "main".into(),
                 port: 3080,
-                start_command: CommandConfig { program: "pnpm".into(), args: vec!["dsh".into(), "web".into(), "--no-open".into()] },
-                install_command: CommandConfig { program: "pnpm".into(), args: vec!["install".into(), "--frozen-lockfile".into()] },
-                build_command: CommandConfig { program: "pnpm".into(), args: vec!["run".into(), "build".into()] },
+                start_command: CommandConfig {
+                    program: "pnpm".into(),
+                    args: vec!["dsh".into(), "web".into(), "--no-open".into()],
+                },
+                install_command: CommandConfig {
+                    program: "pnpm".into(),
+                    args: vec!["install".into(), "--frozen-lockfile".into()],
+                },
+                build_command: CommandConfig {
+                    program: "pnpm".into(),
+                    args: vec!["run".into(), "build".into()],
+                },
                 clean_paths: vec!["dist".into()],
             },
-            lm_studio: LmStudioConfig { api_url: "http://127.0.0.1:1234/v1/models".into() },
-            update: UpdateConfig { remote_name: "origin".into(), allow_prerelease: false },
+            lm_studio: LmStudioConfig {
+                api_url: "http://127.0.0.1:1234/v1/models".into(),
+            },
+            update: UpdateConfig {
+                remote_name: "origin".into(),
+                allow_prerelease: false,
+            },
         }
     }
 }
@@ -191,6 +206,11 @@ fn default_source_dir() -> String {
     } else {
         std::env::var_os("HOME")
     };
-    home.map(|path| PathBuf::from(path).join("deepseek-harness").to_string_lossy().into_owned())
-        .unwrap_or_else(|| "deepseek-harness".into())
+    home.map(|path| {
+        PathBuf::from(path)
+            .join("deepseek-harness")
+            .to_string_lossy()
+            .into_owned()
+    })
+    .unwrap_or_else(|| "deepseek-harness".into())
 }

@@ -18,6 +18,7 @@ const baseStatus: HarnessStatus = {
   ],
   buildArtifactsPresent: true,
   serviceRunning: false,
+  serviceReady: false,
   orphanedProcess: false,
   pid: null,
   port: null,

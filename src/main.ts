@@ -53,7 +53,7 @@ function initialSnapshot(): AppSnapshot {
     config,
     harness: {
       sourceDir: config.harness.sourceDir, branch: null, commit: null, tag: null, dirty: null, updateAvailable: null,
-      dependencies: [], buildArtifactsPresent: null, serviceRunning: false, orphanedProcess: false, pid: null, port: null,
+      dependencies: [], buildArtifactsPresent: null, serviceRunning: false, serviceReady: false, orphanedProcess: false, pid: null, port: null,
       webUrl: null, lastAction: null, lastError: null,
     },
     lmStudio: { reachable: false, apiUrl: config.lmStudio.apiUrl, models: [], error: "正在连接桌面应用后端", checkedAt: "" },
@@ -99,7 +99,9 @@ async function runAction(action: () => Promise<unknown>, successMessage?: string
 
 function formatStatus(status: HarnessStatus): { label: string; tone: string } {
   if (status.orphanedProcess) return { label: "发现遗留进程", tone: "warning" };
-  if (status.serviceRunning) return { label: "运行中", tone: "success" };
+  if (status.serviceReady) return { label: "运行中", tone: "success" };
+  if (status.serviceRunning) return { label: "启动中", tone: "warning" };
+  if (status.port !== null) return { label: "端口占用", tone: "warning" };
   if (status.branch === null) return { label: "尚未安装", tone: "muted" };
   return { label: "已停止", tone: "muted" };
 }
@@ -154,7 +156,7 @@ function renderOverview(current: AppSnapshot): string {
     '<article class="metric-card"><span class="metric-label">源码版本</span><strong class="metric-value">' + escapeHtml(current.harness.branch ?? "未安装") +
     '</strong><span class="metric-detail">' + escapeHtml(current.harness.commit?.slice(0, 12) ?? "—") +
     (current.harness.tag ? " · " + escapeHtml(current.harness.tag) : "") + "</span></article>" +
-    '<article class="metric-card"><span class="metric-label">Web UI</span><strong class="metric-value">' + (current.harness.port ?? current.config.harness.port) +
+    '<article class="metric-card"><span class="metric-label">Web UI</span><strong class="metric-value">' + (current.harness.port ?? "—") +
     '</strong><span class="metric-detail">' + escapeHtml(current.harness.webUrl ?? "未监听") + "</span></article>" +
     '<article class="metric-card"><span class="metric-label">LM Studio</span><strong class="metric-value ' + (lm.reachable ? "success" : "warning") +
     '">' + (lm.reachable ? "已连接" : "不可达") + '</strong><span class="metric-detail">' + lm.models.length + " 个模型</span></article></section>" +

@@ -23,7 +23,10 @@ pub fn validate_source_dir(value: &str) -> Result<(), String> {
         return Err("Harness 源码目录不能为空或包含非法字符".into());
     }
     let path = Path::new(value);
-    if path.parent().is_none() || path == Path::new("/") || path.components().count() <= 1 && path.is_absolute() {
+    if path.parent().is_none()
+        || path == Path::new("/")
+        || path.components().count() <= 1 && path.is_absolute()
+    {
         return Err("为了避免误操作，源码目录不能是文件系统根目录".into());
     }
     Ok(())
@@ -31,21 +34,35 @@ pub fn validate_source_dir(value: &str) -> Result<(), String> {
 
 pub fn validate_repo_url(value: &str) -> Result<(), String> {
     let value = value.trim();
-    let accepted = (value.starts_with("https://") || value.starts_with("http://") || value.starts_with("ssh://") || value.starts_with("git@"))
+    let accepted = (value.starts_with("https://")
+        || value.starts_with("http://")
+        || value.starts_with("ssh://")
+        || value.starts_with("git@"))
         && !value.chars().any(|ch| ch.is_whitespace() || ch == '\0');
-    if accepted { Ok(()) } else { Err("Git URL 需要使用 HTTPS、SSH 或 git@host:path 格式".into()) }
+    if accepted {
+        Ok(())
+    } else {
+        Err("Git URL 需要使用 HTTPS、SSH 或 git@host:path 格式".into())
+    }
 }
 
 pub fn validate_lm_url(value: &str) -> Result<(), String> {
     let value = value.trim();
-    if !(value.starts_with("http://") || value.starts_with("https://")) || value.contains('@') || value.chars().any(|ch| ch.is_whitespace() || ch == '\0') {
+    if !(value.starts_with("http://") || value.starts_with("https://"))
+        || value.contains('@')
+        || value.chars().any(|ch| ch.is_whitespace() || ch == '\0')
+    {
         return Err("LM Studio API 地址必须是不含凭据的 HTTP(S) URL".into());
     }
     Ok(())
 }
 
 pub fn validate_port(port: u16) -> Result<(), String> {
-    if port == 0 { Err("端口必须是 1 到 65535 之间的整数".into()) } else { Ok(()) }
+    if port == 0 {
+        Err("端口必须是 1 到 65535 之间的整数".into())
+    } else {
+        Ok(())
+    }
 }
 
 pub fn validate_command(command: &CommandConfig) -> Result<(), String> {
@@ -60,7 +77,15 @@ pub fn validate_command(command: &CommandConfig) -> Result<(), String> {
 
 pub fn validate_relative_path(value: &str) -> Result<(), String> {
     let path = Path::new(value);
-    if value.trim().is_empty() || path.is_absolute() || path.components().any(|part| matches!(part, Component::ParentDir | Component::RootDir | Component::Prefix(_))) {
+    if value.trim().is_empty()
+        || path.is_absolute()
+        || path.components().any(|part| {
+            matches!(
+                part,
+                Component::ParentDir | Component::RootDir | Component::Prefix(_)
+            )
+        })
+    {
         return Err(format!("清理路径必须是源码目录内的相对路径: {value}"));
     }
     Ok(())
@@ -68,13 +93,24 @@ pub fn validate_relative_path(value: &str) -> Result<(), String> {
 
 pub fn redact(value: &str) -> String {
     let mut result = value.to_string();
-    for key in ["Authorization", "authorization", "api_key", "apiKey", "token", "password", "secret"] {
+    for key in [
+        "Authorization",
+        "authorization",
+        "api_key",
+        "apiKey",
+        "token",
+        "password",
+        "secret",
+    ] {
         let mut start = 0;
         while let Some(offset) = result[start..].find(key) {
             let absolute = start + offset;
             if let Some(colon) = result[absolute..].find(':') {
                 let value_start = absolute + colon + 1;
-                let end = result[value_start..].find(',').map(|pos| value_start + pos).unwrap_or(result.len());
+                let end = result[value_start..]
+                    .find(',')
+                    .map(|pos| value_start + pos)
+                    .unwrap_or(result.len());
                 result.replace_range(value_start..end, " [REDACTED]");
                 start = (value_start + 12).min(result.len());
             } else {
@@ -91,7 +127,10 @@ mod tests {
 
     #[test]
     fn redacts_common_secret_fields() {
-        assert_eq!(redact("Authorization: Bearer abc123"), "Authorization: [REDACTED]");
+        assert_eq!(
+            redact("Authorization: Bearer abc123"),
+            "Authorization: [REDACTED]"
+        );
     }
 
     #[test]

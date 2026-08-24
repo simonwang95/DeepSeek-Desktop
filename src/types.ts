@@ -49,6 +49,7 @@ export interface HarnessStatus {
   dependencies: DependencyStatus[];
   buildArtifactsPresent: boolean | null;
   serviceRunning: boolean;
+  serviceReady: boolean;
   orphanedProcess: boolean;
   pid: number | null;
   port: number | null;
