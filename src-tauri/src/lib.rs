@@ -74,7 +74,7 @@ impl AppState {
             persist_json(&data_dir.join("config.json"), &AppConfig::default())?;
         }
         *self.process_record.lock().map_err(lock_error)? =
-            read_json(&data_dir.join("runtime.json"))?;
+            read_runtime_record(&data_dir.join("runtime.json"))?;
         Ok(())
     }
 
@@ -125,6 +125,21 @@ fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<Option<T>, App
     }
     let value = fs::read_to_string(path)?;
     Ok(Some(serde_json::from_str(&value)?))
+}
+
+fn read_runtime_record(path: &Path) -> Result<Option<ProcessRecord>, AppError> {
+    if !path.exists() {
+        return Ok(None);
+    }
+    let value = fs::read_to_string(path)?;
+    Ok(parse_runtime_record(&value))
+}
+
+fn parse_runtime_record(value: &str) -> Option<ProcessRecord> {
+    if value.trim().is_empty() || value.trim() == "null" {
+        return None;
+    }
+    serde_json::from_str(value).ok()
 }
 
 fn persist_json<T: Serialize>(path: &Path, value: &T) -> Result<(), AppError> {
@@ -1302,5 +1317,12 @@ mod tests {
         let config = AppConfig::default();
         assert_eq!(config.lm_studio.api_url, "http://127.0.0.1:1234/v1/models");
         assert!(validation::validate_config(&config).is_ok());
+    }
+
+    #[test]
+    fn accepts_empty_or_null_runtime_records() {
+        assert!(super::parse_runtime_record("").is_none());
+        assert!(super::parse_runtime_record("null").is_none());
+        assert!(super::parse_runtime_record("not-json").is_none());
     }
 }
