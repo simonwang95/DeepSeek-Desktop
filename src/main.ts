@@ -146,10 +146,9 @@ function renderOverview(current: AppSnapshot): string {
     '</span><button class="icon-button" data-action="dismissError">×</button></div>' : "";
   const install = current.harness.branch === null ? '<button class="secondary-button" data-action="install" ' + (busy ? "disabled" : "") + '>首次安装</button>' : "";
   const dependenciesReady = current.harness.dependencies.length > 0 && current.harness.dependencies.every((dependency) => dependency.available);
-  const missingSystemDependencies = current.harness.dependencies.some((dependency) => !dependency.available);
   const needsPreparation = current.harness.branch !== null && (!dependenciesReady || current.harness.buildArtifactsPresent === false);
   const prepare = needsPreparation ? '<button class="primary-button" data-action="prepare" ' + (busy || current.harness.serviceRunning || !dependenciesReady ? "disabled" : "") + '>' + (current.harness.buildArtifactsPresent === false ? "重新安装依赖并构建" : "安装依赖并构建") + '</button>' : "";
-  const systemInstall = missingSystemDependencies ? '<button class="secondary-button" data-action="installSystemDependencies" ' + (busy || current.harness.serviceRunning ? "disabled" : "") + '>安装系统依赖</button>' : "";
+  const systemInstall = '<button class="secondary-button" data-action="installSystemDependencies" ' + (busy || current.harness.serviceRunning ? "disabled" : "") + '>安装系统依赖</button>';
   const startBlocked = current.harness.branch === null || !dependenciesReady;
   const startLabel = current.harness.buildArtifactsPresent === false ? "启动并自动准备" : "启动服务";
   const preparationHint = current.harness.buildArtifactsPresent === false ? '<p class="hint">首次启动会自动安装 Harness 依赖并构建 Web 产物，完成后再启动服务。</p>' : "";
