@@ -1,0 +1,159 @@
+# DeepSeek Desktop
+
+DeepSeek Desktop is an unofficial macOS-first desktop launcher and lifecycle
+manager for a local DeepSeek Harness checkout. It is independent software and
+has no affiliation with, authorization from, or endorsement by DeepSeek.
+
+The project manages a user-owned Harness source directory and its local
+process. It does not modify Harness product code, bundle Harness source into
+the installer, or modify `~/.dsh`, LM Studio settings, credentials, or user
+sessions.
+
+## Status
+
+The repository is maintained on the `dev` branch. The current implementation
+provides a Tauri 2 + TypeScript UI and Rust application service with:
+
+- first-run configuration and safe `git clone`;
+- Git, Node.js, and pnpm detection with repair suggestions;
+- Harness start, stop, restart, process-group tracking, orphan discovery,
+  port checks, stdout/stderr streaming, and Web UI opening;
+- a safe Harness update pipeline with dirty-worktree protection,
+  optional explicit backup stash, fetch, fast-forward-only merge, dependency
+  installation, configured build cleanup, rebuild, and conditional restart;
+- LM Studio `/v1/models` detection, model display, and error reporting;
+- automated domain tests, Rust tests, CI, and a no-bundle macOS development
+  build entry point.
+
+The app deliberately does not pretend that code signing or notarization has
+completed without the required Apple credentials.
+
+## Requirements
+
+- macOS Apple Silicon is the first supported target; Windows and Linux are
+  kept in the process-management and path-validation design.
+- Node.js 20 or newer.
+- pnpm 10 or a version compatible with the managed Harness checkout.
+- Git.
+- Rust stable and the Tauri system prerequisites for local desktop builds.
+- A local DeepSeek Harness checkout, or a Git URL that can be cloned.
+- Optional: LM Studio running at `http://127.0.0.1:1234`.
+
+## Development
+
+```
+git clone <this-private-repository> DeepSeek-Desktop
+cd DeepSeek-Desktop
+git switch dev
+pnpm install
+pnpm tauri:dev
+```
+
+The browser-only UI can be previewed with `pnpm dev`. It will show a clear
+backend-unavailable message because process control is only available inside
+Tauri.
+
+## First setup
+
+1. Open **设置**.
+2. Choose a Harness source directory. The app never overwrites a non-empty
+   directory.
+3. Confirm the upstream Git URL, branch, and Web port.
+4. Save settings.
+5. If the checkout is absent, choose **首次安装**. The app invokes Git with
+   an argument array and clones only into the configured target.
+6. Check the dependency cards. Missing tools include a concrete repair hint.
+7. Build the Harness using its own documented build command before starting
+   the Web service when the checkout requires built artifacts.
+
+The default service command is equivalent to:
+
+```
+pnpm dsh web --no-open
+```
+
+The default Harness Web port is `3080`, matching the Harness README.
+
+## Safe lifecycle and update behavior
+
+The app records its own configuration and runtime record in the platform
+application-data directory. The runtime record contains the PID, command,
+source path, port, and start time. On the next launch, it checks the saved PID
+and command line before treating a process as an orphan; an unrelated reused
+PID is not trusted.
+
+Stopping sends an interrupt to the managed process group, waits for the port
+to close, and then sends TERM if necessary. `kill -9` is not used as a normal
+stop operation. If the process does not stop after the graceful sequence, the
+app leaves it for manual inspection and does not continue an update.
+
+An update follows this order:
+
+1. inspect running state and stop the service;
+2. confirm the port is released;
+3. inspect the Git worktree;
+4. abort on local changes unless the user explicitly chooses a backup stash;
+5. fetch the configured remote;
+6. merge only with `--ff-only`;
+7. install locked dependencies;
+8. remove only configured, checkout-relative build paths;
+9. rebuild;
+10. restart only after a successful build if the service was running before.
+
+Any failure stops later steps, retains emitted logs, records the error, and
+leaves the checkout and recovery stash available for inspection. No reset,
+force checkout, recursive source deletion, or automatic stash pop is used.
+
+## LM Studio
+
+The default endpoint is:
+
+```
+http://127.0.0.1:1234/v1/models
+```
+
+The URL is configurable. The UI displays the returned model IDs and connection
+errors. The current verification targets are
+`qwen3.6-35b-a3b-nvfp4` and `qwen3.8-27b-nvfp4`; they are not an allowlist and
+are not hard-coded as the only valid models. Requests do not include an API
+key, and logs redact common authorization and secret fields.
+
+## Checks
+
+```
+pnpm typecheck
+pnpm test
+cargo test --manifest-path src-tauri/Cargo.toml
+pnpm build
+pnpm tauri build --no-bundle
+```
+
+`pnpm tauri:build` is an alias for the no-bundle desktop build. Bundling is
+disabled until signing and notarization credentials are available. The neutral
+placeholder icon is not a DeepSeek official logo.
+
+## Release path
+
+The two update channels remain separate:
+
+1. Harness updates use the configured Git remote and the local safe-update
+   state machine.
+2. DeepSeek Desktop updates are intended to use GitHub Releases for signed
+   macOS installers and a future Tauri updater configuration.
+
+Before publishing a desktop release, configure Apple Developer signing,
+notarization credentials, updater signing keys, and private GitHub Actions
+secrets. Add those secrets only in the release environment; never commit them.
+The current CI intentionally builds the desktop binary without claiming a
+signed installer.
+
+## Repository boundary
+
+`DeepSeek-Desktop` is its own Git repository. The managed
+`deepseek-harness` checkout is an external user directory and must never
+receive desktop source files. The app may read its README, Git metadata,
+configuration, and command output, but it does not add files to the Harness
+repository.
+
+See [README.zh.md](README.zh.md), [CONTRIBUTING.md](CONTRIBUTING.md), and
+[SECURITY.md](SECURITY.md).
