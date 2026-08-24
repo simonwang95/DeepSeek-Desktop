@@ -74,6 +74,11 @@ by Tauri. The target machine needs WebView2; current Windows versions normally
 provide it, and the installer can bootstrap it when required. Development mode
 still uses a terminal because it runs Vite.
 
+The repository CI includes a `windows-2022` job that builds and uploads the NSIS
+`.exe` and MSI installers as the `DeepSeek-Desktop-Windows` artifact. Trigger
+the `CI` workflow manually or push to `dev`/`main` to create a downloadable
+Windows build.
+
 ## First setup
 
 1. Open **设置**.

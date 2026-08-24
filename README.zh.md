@@ -59,6 +59,11 @@ WebView2，较新的 Windows 通常已经自带。`pnpm tauri:dev` 同时运行 
 开发服务器，因此开发模式需要终端窗口是正常的。当前没有 Apple 签名和
 公证时，macOS 首次打开可能需要在“系统设置”中手动允许。
 
+Windows 安装包需要在 Windows runner 上构建。提交到 `dev`/`main` 后，或在
+GitHub Actions 手动运行 `CI` workflow，`windows-2022` 任务会生成并上传
+`.exe`（NSIS）和 `.msi` 安装包，下载名为 `DeepSeek-Desktop-Windows` 的
+构建产物即可。
+
 ## 首次设置
 
 1. 打开“设置”。
