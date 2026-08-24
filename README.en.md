@@ -64,8 +64,19 @@ open "src-tauri/target/release/bundle/macos/DeepSeek Desktop.app"
 
 This starts the desktop app without leaving a terminal window open. The
 `pnpm tauri:dev` command is intentionally terminal-based because it also runs
-the Vite development server. The build also produces a `.dmg` in the same
-directory for installation or sharing. Without Apple signing and
+the Vite development server. On macOS, `pnpm tauri:build` first builds the
+`.app`, then uses the project fallback packager to create a compressed `.dmg`
+without attaching a writable virtual disk device. To repack an existing app,
+run:
+
+```
+pnpm tauri:build:dmg
+```
+
+Running `pnpm tauri build` directly bypasses this fallback and invokes Tauri's
+default `bundle_dmg.sh`; restricted environments may then report
+`hdiutil: create failed - device not configured`. Use `pnpm tauri:build` for
+the environment-independent macOS bundle path. Without Apple signing and
 notarization, macOS may require an explicit first-launch approval in System
 Settings.
 

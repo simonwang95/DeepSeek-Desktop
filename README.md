@@ -183,6 +183,14 @@ pnpm tauri:build
 open "src-tauri/target/release/bundle/macos/DeepSeek Desktop.app"
 ```
 
+`pnpm tauri:build` 在 macOS 上会先构建 `.app`，再使用项目内的 DMG 兜底打包器生成压缩的 `.dmg`。该流程不需要 `hdiutil` 挂载可写虚拟磁盘设备，因此适用于受管控或沙箱化的 macOS 环境。单独重新打包已有 `.app` 可运行：
+
+```bash
+pnpm tauri:build:dmg
+```
+
+如果直接执行 `pnpm tauri build`，会绕过项目内兜底打包器并调用 Tauri 默认的 `bundle_dmg.sh`；在没有磁盘映像设备权限的环境中可能出现 `hdiutil: create failed - 设备未配置`。请使用上面的 `pnpm tauri:build`。
+
 Windows 构建由 GitHub Actions 的 `windows-2022` 任务执行。推送到 `dev` 或 `main`，或者手动运行 `CI` workflow 后，可以在构建产物 `DeepSeek-Desktop-Windows` 中下载 `.exe` 和 `.msi`。
 
 ## 发布和仓库边界

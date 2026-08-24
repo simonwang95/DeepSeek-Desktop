@@ -14,7 +14,8 @@
     "test:watch": "vitest",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build",
+    "tauri:build": "node scripts/build-tauri.mjs",
+    "tauri:build:dmg": "node scripts/build-dmg.mjs",
     "tauri:build:binary": "tauri build --no-bundle"
   },
   "dependencies": {
