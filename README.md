@@ -1,167 +1,174 @@
 # DeepSeek Desktop
 
-DeepSeek Desktop is an unofficial macOS-first desktop launcher and lifecycle
-manager for a local DeepSeek Harness checkout. It is independent software and
-has no affiliation with, authorization from, or endorsement by DeepSeek.
+DeepSeek Desktop 是面向本机 DeepSeek Harness 的非官方桌面启动器和生命周期管理器，提供源码准备、依赖检测、构建、启动、停止、更新和 LM Studio 连接管理。
 
-The project manages a user-owned Harness source directory and its local
-process. It does not modify Harness product code, bundle Harness source into
-the installer, or modify `~/.dsh`, LM Studio settings, credentials, or user
-sessions.
+本项目独立维护，与 DeepSeek 官方没有隶属、授权或背书关系。应用只管理用户指定的 Harness 源码目录和本机进程，不修改 Harness 产品代码，不在安装包中重新分发 Harness 源码，也不修改 `~/.dsh`、LM Studio 配置、凭据或用户会话。
 
-## Status
+## 界面预览
 
-The repository is maintained on the `dev` branch. The current implementation
-provides a Tauri 2 + TypeScript UI and Rust application service with:
+### 运行中的总览页
 
-- first-run configuration and safe `git clone`;
-- Git, Node.js, and pnpm detection with repair suggestions;
-- Harness start, stop, restart, process-group tracking, orphan discovery,
-  port checks, stdout/stderr streaming, and Web UI opening;
-- a safe Harness update pipeline with dirty-worktree protection,
-  optional explicit backup stash, fetch, fast-forward-only merge, dependency
-  installation, configured build cleanup, rebuild, and conditional restart;
-- LM Studio `/v1/models` detection, model display, and error reporting;
-- automated domain tests, Rust tests, CI, and macOS `.app`/`.dmg` bundle
-  build entry points.
+服务启动后，总览页会显示 Harness 进程、端口、源码版本、构建产物、依赖状态、LM Studio 模型和 Web UI 入口。
 
-The app deliberately does not pretend that code signing or notarization has
-completed without the required Apple credentials.
+![Harness 运行中总览](docs/screenshots/overview-running.png)
 
-## Requirements
+### 首次准备与依赖检测
 
-- macOS Apple Silicon and Windows are supported targets; Linux remains covered
-  in the process-management and path-validation design.
-- Node.js 22.19 or newer in the 22 line, or Node.js 24 or newer, for the
-  current Harness checkout.
-- pnpm 11.7 or newer for the current Harness checkout.
-- Git.
-- Rust stable and the Tauri system prerequisites for local desktop builds.
-- A local DeepSeek Harness checkout, or a Git URL that can be cloned.
-- Optional: LM Studio running at `http://127.0.0.1:1234`.
+启动前会检查 Git、Node.js、pnpm 和 Harness 构建状态；缺少依赖或构建产物时，可以使用自动准备流程并查看实时进度。
 
-## Development
+![Harness 依赖检测与准备](docs/screenshots/overview-preparing.png)
 
+### 异常提示与恢复
+
+如果进程提前退出、端口没有监听或构建失败，应用会保留错误信息和实时日志，并停止后续步骤，方便检查启动命令和构建产物。
+
+![Harness 启动异常提示](docs/screenshots/overview-error.png)
+
+> 截图中的本机用户名已脱敏为 `user`；PID、路径和模型列表仅用于演示，实际内容会随机器配置变化。
+
+## 功能概览
+
+- 首次配置 Harness 源码目录、Git URL、分支和 Web 端口；
+- 安全执行 `git clone`，不会覆盖非空目录或用户文件；
+- 检测 Git、Node.js、pnpm 及版本要求，并显示可执行的修复建议；
+- 显式安装系统依赖：macOS 使用 Homebrew，Windows 使用 winget；
+- 自动安装 Harness 锁定依赖并构建 Web 产物；
+- 启动时自动补齐缺少的 `node_modules` 或构建产物；
+- 启动、停止、重启、端口检查、进程记录、遗留进程发现和实时日志；
+- 打开 Harness Web UI；
+- 安全更新：脏工作区保护、可选备份 stash、fetch、fast-forward 更新、依赖安装、构建清理、重建和条件重启；
+- 检测 LM Studio `/v1/models` 并展示已加载模型；
+- macOS `.app/.dmg` 和 Windows `.exe/.msi` 构建流程。
+
+## 系统要求
+
+### 运行已打包应用
+
+- macOS Apple Silicon；
+- Windows 10/11，建议已安装 WebView2；
+- Git；
+- Node.js 22.19+（22.x）或 Node.js 24+；
+- pnpm 11.7+；
+- 可选：运行在 `http://127.0.0.1:1234` 的 LM Studio。
+
+### 本地开发和构建
+
+- Node.js 和 pnpm；
+- Rust stable；
+- Tauri 2 对应的系统构建依赖；
+- Windows 构建需要 Windows runner、MSVC、WebView2 和 Tauri 打包工具。
+
+## 安装和首次使用
+
+1. 打开应用，进入“设置”。
+2. 填写 Harness 源码目录、上游 Git URL、分支和 Web 端口。
+3. 保存设置。
+4. 检查总览页底部的依赖状态。
+5. 如果 Git、Node.js 或 pnpm 缺失或版本过低，点击“安装系统依赖”。
+   - macOS：使用 Homebrew；
+   - Windows：使用 winget；
+   - Homebrew 或 winget 本身需要预先安装；
+   - 系统安装只会在用户明确点击按钮后执行。
+6. 如果 Harness 源码目录不存在，点击“首次安装”。应用会 clone 源码，并自动执行：
+
+   ```text
+   pnpm install --frozen-lockfile
+   pnpm run build
+   ```
+
+7. 如果已有源码但缺少依赖或构建产物，点击“启动并自动准备”。应用会先准备完整运行环境，再启动服务。
+
+默认启动命令为：
+
+```text
+pnpm dsh web --no-open
 ```
-git clone <this-private-repository> DeepSeek-Desktop
+
+默认 Web 端口为 `3080`，与 Harness README 保持一致。
+
+## 总览页按钮说明
+
+| 操作 | 作用 |
+| --- | --- |
+| 启动服务 | 启动已经准备好的 Harness 服务 |
+| 启动并自动准备 | 自动安装依赖、构建产物，然后启动服务 |
+| 停止服务 | 发送中断信号并等待端口释放 |
+| 重启 | 安全停止后重新启动服务 |
+| 打开 Web UI | 打开 `http://127.0.0.1:3080` |
+| 安装系统依赖 | 安装或修复 Git、Node.js、pnpm |
+| 安装依赖并构建 | 手动重新执行 Harness 依赖安装和构建 |
+| 检查更新 | 检查远程仓库和当前分支状态 |
+| 安全更新 | 按安全更新流程拉取、构建并按需重启 |
+
+## Finder 和 Windows 环境支持
+
+macOS 从 Finder 启动 `.app` 时，通常不会继承交互式终端的完整 `PATH`。应用会读取登录 Shell 的 PATH，并搜索常见的 NVM、Homebrew、Volta 和 pnpm 路径，因此从 Finder 启动不需要额外打开终端。
+
+Windows 额外支持：
+
+- `.exe`、`.cmd`、`.bat` 命令包装器；
+- npm 和 pnpm 常见安装目录；
+- WMIC 不可用时使用 PowerShell 查询进程命令行；
+- 使用 `taskkill` 处理 Harness 子进程树；
+- Windows runner 自动构建 NSIS `.exe` 和 MSI 安装包。
+
+如果工具安装在自定义位置，可以在“设置”中填入可执行文件的绝对路径。
+
+## LM Studio
+
+默认 API 地址为：
+
+```text
+http://127.0.0.1:1234/v1/models
+```
+
+地址可以在“设置”中修改。界面会展示返回的模型 ID 和连接错误。当前验证目标包括 `qwen3.6-35b-a3b-nvfp4` 和 `qwen3.8-27b-nvfp4`，但它们不是白名单，应用不会限制其他模型名称。请求不会附带 API Key，日志会脱敏常见的授权和密钥字段。
+
+## 安全启停和更新
+
+应用会把自己的设置和运行态保存到操作系统应用数据目录。运行态包含 PID、命令、源码路径、端口和启动时间。再次打开应用时，会检查保存的 PID、命令行和源码目录，避免误操作被复用的 PID。
+
+停止服务时：
+
+1. 向受管进程组发送中断信号；
+2. 等待端口释放；
+3. 必要时发送 TERM；
+4. 超时后停止后续操作，保留现场和日志。
+
+普通停止不会使用 `kill -9`。更新流程遇到错误会立即停止后续步骤，不会执行 `reset`、强制 checkout、递归删除源码目录或自动 `stash pop`。
+
+## 常见问题
+
+| 现象 | 处理方式 |
+| --- | --- |
+| `127.0.0.1:3080` 拒绝连接 | 回到应用点击启动，查看实时日志和端口状态 |
+| Harness 进程已退出 | 检查构建产物、Node.js/pnpm 版本和启动命令 |
+| 找不到 Git、Node.js 或 pnpm | 点击“安装系统依赖”，或在设置中填写绝对路径 |
+| `fatal: couldn't find remote ref main` | 检查分支设置；Harness 默认分支可能是 `master` |
+| 构建产物未找到 | 点击“启动并自动准备”或“安装依赖并构建” |
+| LM Studio 不可达 | 确认 LM Studio 正在运行，并检查 `/v1/models` 地址 |
+| Windows 打包失败 | 确认 Tauri 图标资源包含 `src-tauri/icons/icon.ico`，并在 Windows runner 上构建 |
+
+## 开发
+
+```bash
+git clone https://github.com/simonwang95/DeepSeek-Desktop.git
 cd DeepSeek-Desktop
-git switch dev
 pnpm install
 pnpm tauri:dev
 ```
 
-The browser-only UI can be previewed with `pnpm dev`. It will show a clear
-backend-unavailable message because process control is only available inside
-Tauri.
+只预览浏览器界面：
 
-For normal use, build the bundled desktop application and open the generated
-package from the target OS. On macOS:
-
-```
-pnpm tauri:build
-open "src-tauri/target/release/bundle/macos/DeepSeek Desktop.app"
+```bash
+pnpm dev
 ```
 
-This starts the desktop app without leaving a terminal window open. The
-`pnpm tauri:dev` command is intentionally terminal-based because it also runs
-the Vite development server. The build also produces a `.dmg` in the same
-directory for installation or sharing. Without Apple signing and
-notarization, macOS may require an explicit first-launch approval in System
-Settings.
+浏览器预览不具备 Tauri 的进程管理能力，会显示桌面后端不可用提示。
 
-On Windows, `pnpm tauri build` produces the Windows installer formats selected
-by Tauri. The target machine needs WebView2; current Windows versions normally
-provide it, and the installer can bootstrap it when required. Development mode
-still uses a terminal because it runs Vite.
+## 检查命令
 
-The repository CI includes a `windows-2022` job that builds and uploads the NSIS
-`.exe` and MSI installers as the `DeepSeek-Desktop-Windows` artifact. Trigger
-the `CI` workflow manually or push to `dev`/`main` to create a downloadable
-Windows build.
-
-## First setup
-
-1. Open **设置**.
-2. Choose a Harness source directory. The app never overwrites a non-empty
-   directory.
-3. Confirm the upstream Git URL, branch, and Web port.
-4. Save settings.
-5. Check the dependency cards. If Git, Node.js, or pnpm is missing or too old,
-   click **安装系统依赖**. On macOS this uses Homebrew; on Windows it uses
-   winget. The package manager must already be installed, and the operation is
-   always started by an explicit button click.
-6. If the checkout is absent, choose **首次安装**. The app invokes Git with an
-   argument array, clones only into the configured target, and then automatically
-   installs the locked Harness dependencies and builds the Web artifacts.
-7. If an existing checkout has no build artifacts, **启动并自动准备** performs
-   the same dependency installation and build before starting the service. The
-   separate **安装依赖并构建** button remains available for a manual retry.
-
-The default service command is equivalent to:
-
-```
-pnpm dsh web --no-open
-```
-
-The default Harness Web port is `3080`, matching the Harness README.
-
-On macOS, a Finder-launched app does not inherit the interactive terminal
-`PATH`. The desktop service now reads the login-shell PATH and searches common
-NVM, Homebrew, Volta, and pnpm locations before running Git, Node, or pnpm. On
-Windows it also recognizes `.exe`, `.cmd`, and `.bat` command wrappers and
-common npm/pnpm installation directories. If your tools use a custom location,
-enter the absolute executable path in **设置**. If an existing configuration
-still says `main` while the remote has changed to `master`, update checks verify
-the configured branch first and then fall back to the remote default branch
-without rewriting your configuration.
-
-## Safe lifecycle and update behavior
-
-The app records its own configuration and runtime record in the platform
-application-data directory. The runtime record contains the PID, command,
-source path, port, and start time. On the next launch, it checks the saved PID
-and command line before treating a process as an orphan; an unrelated reused
-PID is not trusted.
-
-Stopping sends an interrupt to the managed process group, waits for the port
-to close, and then sends TERM if necessary. `kill -9` is not used as a normal
-stop operation. If the process does not stop after the graceful sequence, the
-app leaves it for manual inspection and does not continue an update.
-
-An update follows this order:
-
-1. inspect running state and stop the service;
-2. confirm the port is released;
-3. inspect the Git worktree;
-4. abort on local changes unless the user explicitly chooses a backup stash;
-5. fetch the configured remote;
-6. merge only with `--ff-only`;
-7. install locked dependencies;
-8. remove only configured, checkout-relative build paths;
-9. rebuild;
-10. restart only after a successful build if the service was running before.
-
-Any failure stops later steps, retains emitted logs, records the error, and
-leaves the checkout and recovery stash available for inspection. No reset,
-force checkout, recursive source deletion, or automatic stash pop is used.
-
-## LM Studio
-
-The default endpoint is:
-
-```
-http://127.0.0.1:1234/v1/models
-```
-
-The URL is configurable. The UI displays the returned model IDs and connection
-errors. The current verification targets are
-`qwen3.6-35b-a3b-nvfp4` and `qwen3.8-27b-nvfp4`; they are not an allowlist and
-are not hard-coded as the only valid models. Requests do not include an API
-key, and logs redact common authorization and secret fields.
-
-## Checks
-
-```
+```bash
 pnpm typecheck
 pnpm test
 cargo test --manifest-path src-tauri/Cargo.toml
@@ -169,32 +176,19 @@ pnpm build
 pnpm tauri:build
 ```
 
-`pnpm tauri:build` creates the macOS `.app` and `.dmg`. Use
-`pnpm tauri:build:binary` only when a raw executable is needed for debugging or
-CI. The neutral placeholder icon is not a DeepSeek official logo.
+macOS 构建：
 
-## Release path
+```bash
+pnpm tauri:build
+open "src-tauri/target/release/bundle/macos/DeepSeek Desktop.app"
+```
 
-The two update channels remain separate:
+Windows 构建由 GitHub Actions 的 `windows-2022` 任务执行。推送到 `dev` 或 `main`，或者手动运行 `CI` workflow 后，可以在构建产物 `DeepSeek-Desktop-Windows` 中下载 `.exe` 和 `.msi`。
 
-1. Harness updates use the configured Git remote and the local safe-update
-   state machine.
-2. DeepSeek Desktop updates are intended to use GitHub Releases for signed
-   macOS installers and a future Tauri updater configuration.
+## 发布和仓库边界
 
-Before publishing a desktop release, configure Apple Developer signing,
-notarization credentials, updater signing keys, and private GitHub Actions
-secrets. Add those secrets only in the release environment; never commit them.
-The local bundle is currently unsigned; the CI compile job intentionally uses a
-no-bundle build and does not claim to produce a signed installer.
+Harness 源码更新使用配置的 Git 远程仓库和本地安全更新状态机；DeepSeek Desktop 自身更新预留 GitHub Releases。正式发布前需要配置签名、公证、updater 密钥和 GitHub Actions secrets，凭据不能提交到仓库。
 
-## Repository boundary
+`DeepSeek-Desktop` 是独立 Git 仓库。被管理的 `deepseek-harness` 是用户指定的外部目录，桌面应用源码绝不能加入其中。应用只读参考 Harness README、Git 元数据、配置和命令输出，不会向 Harness 仓库添加桌面文件。
 
-`DeepSeek-Desktop` is its own Git repository. The managed
-`deepseek-harness` checkout is an external user directory and must never
-receive desktop source files. The app may read its README, Git metadata,
-configuration, and command output, but it does not add files to the Harness
-repository.
-
-See [README.zh.md](README.zh.md), [CONTRIBUTING.md](CONTRIBUTING.md), and
-[SECURITY.md](SECURITY.md).
+相关文档：[English README](README.en.md)、[贡献指南](CONTRIBUTING.md)、[安全策略](SECURITY.md)。
