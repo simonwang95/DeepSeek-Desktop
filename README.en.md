@@ -43,7 +43,7 @@ completed without the required Apple credentials.
 ## Development
 
 ```
-git clone <this-private-repository> DeepSeek-Desktop
+git clone https://github.com/simonwang95/DeepSeek-Desktop.git
 cd DeepSeek-Desktop
 git switch dev
 pnpm install
@@ -196,5 +196,5 @@ receive desktop source files. The app may read its README, Git metadata,
 configuration, and command output, but it does not add files to the Harness
 repository.
 
-See [README.zh.md](README.zh.md), [CONTRIBUTING.md](CONTRIBUTING.md), and
+See the [Chinese README](README.md), [CONTRIBUTING.md](CONTRIBUTING.md), and
 [SECURITY.md](SECURITY.md).
