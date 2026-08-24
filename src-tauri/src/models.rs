@@ -19,6 +19,15 @@ pub struct HarnessConfig {
     pub install_command: CommandConfig,
     pub build_command: CommandConfig,
     pub clean_paths: Vec<String>,
+    #[serde(default = "default_artifact_paths")]
+    pub artifact_paths: Vec<String>,
+}
+
+fn default_artifact_paths() -> Vec<String> {
+    vec![
+        "apps/cli/lib/bin.js".into(),
+        "packages/bundle/web-app/lib/index.js".into(),
+    ]
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -188,6 +197,7 @@ impl Default for AppConfig {
                     args: vec!["run".into(), "build".into()],
                 },
                 clean_paths: vec!["dist".into()],
+                artifact_paths: default_artifact_paths(),
             },
             lm_studio: LmStudioConfig {
                 api_url: "http://127.0.0.1:1234/v1/models".into(),

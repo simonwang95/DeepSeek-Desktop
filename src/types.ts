@@ -14,6 +14,7 @@ export interface HarnessConfig {
   installCommand: CommandConfig;
   buildCommand: CommandConfig;
   cleanPaths: string[];
+  artifactPaths: string[];
 }
 
 export interface LmStudioConfig {

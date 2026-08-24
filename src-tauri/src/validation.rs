@@ -14,6 +14,9 @@ pub fn validate_config(config: &AppConfig) -> Result<(), String> {
     for path in &config.harness.clean_paths {
         validate_relative_path(path)?;
     }
+    for path in &config.harness.artifact_paths {
+        validate_relative_path(path)?;
+    }
     validate_lm_url(&config.lm_studio.api_url)
 }
 

@@ -49,6 +49,7 @@ describe("启动与更新决策", () => {
     expect(startBlocker({ ...baseStatus, port: 3080 })).toBe("portConflict");
     expect(startBlocker({ ...baseStatus, orphanedProcess: true })).toBe("orphanedProcess");
     expect(startBlocker({ ...baseStatus, dependencies: [{ ...baseStatus.dependencies[0], available: false }] })).toBe("missingDependencies");
+    expect(startBlocker({ ...baseStatus, buildArtifactsPresent: false })).toBe("missingBuildArtifacts");
   });
 
   it("脏工作区默认中止，显式选择后才创建 stash", () => {

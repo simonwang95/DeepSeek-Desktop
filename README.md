@@ -32,8 +32,9 @@ completed without the required Apple credentials.
 
 - macOS Apple Silicon is the first supported target; Windows and Linux are
   kept in the process-management and path-validation design.
-- Node.js 20 or newer.
-- pnpm 10 or a version compatible with the managed Harness checkout.
+- Node.js 22.19 or newer in the 22 line, or Node.js 24 or newer, for the
+  current Harness checkout.
+- pnpm 11.7 or newer for the current Harness checkout.
 - Git.
 - Rust stable and the Tauri system prerequisites for local desktop builds.
 - A local DeepSeek Harness checkout, or a Git URL that can be cloned.
@@ -78,8 +79,10 @@ Settings.
 5. If the checkout is absent, choose **首次安装**. The app invokes Git with
    an argument array and clones only into the configured target.
 6. Check the dependency cards. Missing tools include a concrete repair hint.
-7. Build the Harness using its own documented build command before starting
-   the Web service when the checkout requires built artifacts.
+7. If the dashboard reports missing dependencies or build artifacts, click
+   **安装依赖并构建**. The app will run the configured install and build
+   commands with live logs and will keep **启动服务** disabled until the
+   expected artifacts exist.
 
 The default service command is equivalent to:
 

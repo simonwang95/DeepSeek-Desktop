@@ -3,6 +3,7 @@ import type { HarnessStatus, LmStudioStatus } from "../types";
 export type StartBlocker =
   | "missingSource"
   | "missingDependencies"
+  | "missingBuildArtifacts"
   | "portConflict"
   | "orphanedProcess"
   | null;
@@ -10,6 +11,7 @@ export type StartBlocker =
 export function startBlocker(status: HarnessStatus): StartBlocker {
   if (!status.sourceDir) return "missingSource";
   if (status.dependencies.some((item) => !item.available)) return "missingDependencies";
+  if (status.buildArtifactsPresent === false) return "missingBuildArtifacts";
   if (status.orphanedProcess) return "orphanedProcess";
   if (status.port !== null && !status.serviceRunning) return "portConflict";
   return null;

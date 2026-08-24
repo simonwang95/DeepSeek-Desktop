@@ -8,6 +8,7 @@ use models::{
     LogEntry, ManagedProcess, OperationProgress, ProcessRecord, UpdatePhase,
 };
 use serde::{Deserialize, Serialize};
+use std::cmp::Reverse;
 use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -215,32 +216,28 @@ fn add_runtime_path(paths: &mut Vec<PathBuf>, path: PathBuf) {
     }
 }
 
+fn add_runtime_paths(paths: &mut Vec<PathBuf>, value: &OsStr) {
+    for path in std::env::split_paths(value) {
+        add_runtime_path(paths, path);
+    }
+}
+
 fn build_runtime_path() -> OsString {
     let mut paths = Vec::new();
 
-    if let Some(path) = std::env::var_os("PATH") {
-        paths.extend(std::env::split_paths(&path));
-    }
-
-    // Finder-launched apps do not inherit the interactive shell PATH. Reading
-    // the fixed login-shell command lets NVM, Homebrew, Volta, and pnpm
-    // installations work without passing user input through a shell.
-    if cfg!(target_os = "macos") {
-        if let Ok(output) = Command::new("/bin/zsh")
-            .args(["-lc", "printf '%s' \"$PATH\""])
-            .output()
-        {
-            if output.status.success() {
-                let shell_path = String::from_utf8_lossy(&output.stdout);
-                paths.extend(std::env::split_paths(OsStr::new(shell_path.trim())));
-            }
-        }
-        for path in ["/opt/homebrew/bin", "/opt/homebrew/sbin", "/usr/local/bin"] {
-            add_runtime_path(&mut paths, PathBuf::from(path));
-        }
-    }
-
     if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
+        let nvm_versions = home.join(".nvm/versions/node");
+        let mut nvm_bins = fs::read_dir(nvm_versions)
+            .ok()
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|entry| entry.path().join("bin"))
+            .collect::<Vec<_>>();
+        nvm_bins.sort_by_key(|path| Reverse(node_version_key(path)));
+        for path in nvm_bins {
+            add_runtime_path(&mut paths, path);
+        }
         for relative in [
             ".local/bin",
             ".local/share/pnpm",
@@ -251,15 +248,52 @@ fn build_runtime_path() -> OsString {
         ] {
             add_runtime_path(&mut paths, home.join(relative));
         }
-        let nvm_versions = home.join(".nvm/versions/node");
-        if let Ok(entries) = fs::read_dir(nvm_versions) {
-            for entry in entries.flatten() {
-                add_runtime_path(&mut paths, entry.path().join("bin"));
+    }
+
+    if cfg!(target_os = "macos") {
+        for path in ["/opt/homebrew/bin", "/opt/homebrew/sbin", "/usr/local/bin"] {
+            add_runtime_path(&mut paths, PathBuf::from(path));
+        }
+    }
+
+    // Finder-launched apps do not inherit the interactive shell PATH. Reading
+    // the fixed login-shell command lets custom NVM, Homebrew, Volta, and pnpm
+    // installations work without passing user input through a shell.
+    if cfg!(target_os = "macos") {
+        if let Ok(output) = Command::new("/bin/zsh")
+            .args(["-lc", "printf '%s' \"$PATH\""])
+            .output()
+        {
+            if output.status.success() {
+                let shell_path = String::from_utf8_lossy(&output.stdout);
+                add_runtime_paths(&mut paths, OsStr::new(shell_path.trim()));
             }
         }
     }
 
+    if let Some(path) = std::env::var_os("PATH") {
+        add_runtime_paths(&mut paths, &path);
+    }
+
     std::env::join_paths(paths).unwrap_or_default()
+}
+
+fn node_version_key(path: &Path) -> (u32, u32, u32) {
+    let version = path
+        .parent()
+        .and_then(Path::file_name)
+        .and_then(OsStr::to_str)
+        .unwrap_or_default()
+        .strip_prefix('v')
+        .unwrap_or_default();
+    let mut parts = version
+        .split('.')
+        .map(|part| part.parse::<u32>().unwrap_or(0));
+    (
+        parts.next().unwrap_or(0),
+        parts.next().unwrap_or(0),
+        parts.next().unwrap_or(0),
+    )
 }
 
 fn runtime_path() -> OsString {
@@ -523,13 +557,10 @@ fn inspect_harness(app: &AppHandle, state: &AppState) -> Result<HarnessStatus, A
         .and_then(|value| value.parse::<u64>().ok())
         .map(|count| count > 0);
     status.dependencies = dependency_statuses(state)?;
-    status.build_artifacts_present = Some(
-        config
-            .harness
-            .clean_paths
-            .iter()
-            .any(|item| source.join(item).exists()),
-    );
+    status.build_artifacts_present = Some(artifact_paths_present(
+        &source,
+        &config.harness.artifact_paths,
+    ));
     if let Some(managed) = state.managed_process.lock().map_err(lock_error)?.as_ref() {
         status.service_running = true;
         status.pid = Some(managed.pid);
@@ -555,6 +586,52 @@ fn inspect_harness(app: &AppHandle, state: &AppState) -> Result<HarnessStatus, A
     status.last_action = state.last_action.lock().map_err(lock_error)?.clone();
     status.last_error = state.last_error.lock().map_err(lock_error)?.clone();
     Ok(status)
+}
+
+fn parsed_version(value: &str) -> Option<(u32, u32, u32)> {
+    let value = value.trim().strip_prefix('v').unwrap_or(value.trim());
+    let mut parts = value.split('.').map(|part| {
+        part.chars()
+            .take_while(|character| character.is_ascii_digit())
+            .collect::<String>()
+            .parse::<u32>()
+            .ok()
+    });
+    Some((
+        parts.next()??,
+        parts.next()??,
+        parts.next().unwrap_or(Some(0))?,
+    ))
+}
+
+fn node_version_supported(value: &str) -> bool {
+    let Some((major, minor, _patch)) = parsed_version(value) else {
+        return false;
+    };
+    (major == 22 && minor >= 19) || major >= 24
+}
+
+fn pnpm_version_supported(value: &str) -> bool {
+    let Some((major, minor, _patch)) = parsed_version(value) else {
+        return false;
+    };
+    major > 11 || (major == 11 && minor >= 7)
+}
+
+fn dependency_version_error(name: &str, version: &str) -> Option<String> {
+    match name {
+        "node" if !node_version_supported(version) => Some(format!(
+            "检测到 Node.js {version}；当前 Harness 需要 Node.js 22.19+ 或 24+"
+        )),
+        "pnpm" if !pnpm_version_supported(version) => Some(format!(
+            "检测到 pnpm {version}；当前 Harness 需要 pnpm 11.7+"
+        )),
+        _ => None,
+    }
+}
+
+fn artifact_paths_present(source: &Path, paths: &[String]) -> bool {
+    !paths.is_empty() && paths.iter().all(|path| source.join(path).exists())
 }
 
 fn dependency_statuses(state: &AppState) -> Result<Vec<DependencyStatus>, AppError> {
@@ -586,13 +663,17 @@ fn dependency_statuses(state: &AppState) -> Result<Vec<DependencyStatus>, AppErr
         let value = command_for_spec(&spec)
             .and_then(|mut command| command.output().map_err(AppError::from));
         match value {
-            Ok(output) if output.status.success() => result.push(DependencyStatus {
-                name: name.into(),
-                available: true,
-                version: Some(String::from_utf8_lossy(&output.stdout).trim().into()),
-                command: spec.program,
-                suggestion,
-            }),
+            Ok(output) if output.status.success() => {
+                let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                let version_error = dependency_version_error(name, &version);
+                result.push(DependencyStatus {
+                    name: name.into(),
+                    available: version_error.is_none(),
+                    version: Some(version),
+                    command: spec.program,
+                    suggestion: version_error.unwrap_or(suggestion),
+                });
+            }
             Ok(output) => result.push(DependencyStatus {
                 name: name.into(),
                 available: false,
@@ -794,6 +875,20 @@ fn start_process(app: &AppHandle, state: &AppState) -> Result<(), AppError> {
     if !source.is_dir() || !source.join(".git").exists() {
         return Err(AppError::Message(
             "找不到 Harness 源码，请先完成首次安装".into(),
+        ));
+    }
+    if let Some(dependency) = dependency_statuses(state)?
+        .into_iter()
+        .find(|dependency| !dependency.available)
+    {
+        return Err(AppError::Message(format!(
+            "无法启动 Harness：{} 不可用。{}",
+            dependency.name, dependency.suggestion
+        )));
+    }
+    if !artifact_paths_present(&source, &config.harness.artifact_paths) {
+        return Err(AppError::Message(
+            "未找到 Harness 构建产物，请先点击“安装依赖并构建”".into(),
         ));
     }
     if port_is_open(config.harness.port) {
@@ -1154,6 +1249,103 @@ fn install_harness(app: AppHandle, state: State<'_, AppState>) -> Result<(), App
 }
 
 #[tauri::command]
+fn prepare_harness(app: AppHandle, state: State<'_, AppState>) -> Result<(), AppError> {
+    state.cancel_requested.store(false, Ordering::SeqCst);
+    let result = (|| {
+        if state.managed_process.lock().map_err(lock_error)?.is_some() || orphan_is_alive(&state)? {
+            return Err(AppError::Message(
+                "Harness 正在运行，请先停止服务后再安装依赖和构建".into(),
+            ));
+        }
+        let (config, source) = configured_source(&state)?;
+        if !source.is_dir() || !source.join(".git").exists() {
+            return Err(AppError::Message(
+                "找不到 Harness 源码，请先完成首次安装".into(),
+            ));
+        }
+        if let Some(dependency) = dependency_statuses(&state)?
+            .into_iter()
+            .find(|dependency| !dependency.available)
+        {
+            return Err(AppError::Message(format!(
+                "无法准备 Harness：{} 不可用。{}",
+                dependency.name, dependency.suggestion
+            )));
+        }
+        emit_progress(
+            &app,
+            &state,
+            UpdatePhase::Checking,
+            "准备 Harness 依赖和构建",
+            None,
+            Some(5),
+            true,
+        );
+        let install = command_from(&config.harness.install_command)?;
+        emit_progress(
+            &app,
+            &state,
+            UpdatePhase::InstallingDependencies,
+            "安装锁定依赖",
+            None,
+            Some(25),
+            true,
+        );
+        ensure_success(
+            run_logged(&app, &install, &source, "安装 Harness 依赖")?,
+            "安装 Harness 依赖",
+        )?;
+        if state.cancel_requested.load(Ordering::SeqCst) {
+            return Err(AppError::Message("准备构建已取消".into()));
+        }
+        let build = command_from(&config.harness.build_command)?;
+        emit_progress(
+            &app,
+            &state,
+            UpdatePhase::Building,
+            "构建 Harness Web 产物",
+            Some(config.harness.artifact_paths.join(", ")),
+            Some(65),
+            true,
+        );
+        ensure_success(
+            run_logged(&app, &build, &source, "构建 Harness")?,
+            "构建 Harness",
+        )?;
+        if !artifact_paths_present(&source, &config.harness.artifact_paths) {
+            return Err(AppError::Message(
+                "构建命令已结束，但仍未找到预期产物，请查看实时日志".into(),
+            ));
+        }
+        set_action(&state, "Harness 依赖和构建已完成", None)?;
+        emit_progress(
+            &app,
+            &state,
+            UpdatePhase::Completed,
+            "Harness 依赖和构建已完成",
+            None,
+            Some(100),
+            false,
+        );
+        Ok(())
+    })();
+    if let Err(error) = &result {
+        let detail = error.to_string();
+        let _ = set_action(&state, "Harness 准备失败", Some(detail.clone()));
+        emit_progress(
+            &app,
+            &state,
+            UpdatePhase::Failed,
+            "Harness 准备失败，后续步骤已停止",
+            Some(detail),
+            None,
+            false,
+        );
+    }
+    result
+}
+
+#[tauri::command]
 fn start_harness(app: AppHandle, state: State<'_, AppState>) -> Result<(), AppError> {
     start_process(&app, &state)
 }
@@ -1496,6 +1688,7 @@ pub fn run() {
             save_config,
             detect_dependencies,
             install_harness,
+            prepare_harness,
             start_harness,
             stop_harness,
             restart_harness,
@@ -1513,14 +1706,23 @@ pub fn run() {
 mod tests {
     use super::models::AppConfig;
     use super::validation;
-    use super::{parse_remote_default_branch, resolve_program_in_path, start_failure_message};
+    use super::{
+        node_version_key, node_version_supported, parse_remote_default_branch, parsed_version,
+        pnpm_version_supported, resolve_program_in_path, runtime_path, start_failure_message,
+    };
+    use std::cmp::Reverse;
     use std::ffi::OsStr;
+    use std::path::{Path, PathBuf};
 
     #[test]
     fn default_config_does_not_touch_harness_user_config() {
         let config = AppConfig::default();
         assert_eq!(config.lm_studio.api_url, "http://127.0.0.1:1234/v1/models");
         assert_eq!(config.harness.branch, "master");
+        assert!(config
+            .harness
+            .artifact_paths
+            .contains(&"apps/cli/lib/bin.js".into()));
         assert!(validation::validate_config(&config).is_ok());
     }
 
@@ -1554,5 +1756,43 @@ mod tests {
             .expect_err("missing program should be reported");
         assert!(error.to_string().contains("Finder"));
         assert!(error.to_string().contains("pnpm"));
+    }
+
+    #[test]
+    fn enforces_harness_runtime_versions() {
+        assert_eq!(parsed_version("v24.19.0"), Some((24, 19, 0)));
+        assert!(
+            node_version_key(Path::new("/tmp/v24.19.0/bin"))
+                > node_version_key(Path::new("/tmp/v20.20.2/bin"))
+        );
+        assert!(node_version_supported("v24.19.0"));
+        assert!(node_version_supported("v22.19.0"));
+        assert!(!node_version_supported("v20.20.2"));
+        assert!(pnpm_version_supported("11.7.0"));
+        assert!(!pnpm_version_supported("10.33.0"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn finder_runtime_path_prefers_highest_nvm_node() {
+        let Some(home) = std::env::var_os("HOME").map(PathBuf::from) else {
+            return;
+        };
+        let mut candidates = std::fs::read_dir(home.join(".nvm/versions/node"))
+            .ok()
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|entry| entry.path().join("bin/node"))
+            .filter(|path| path.is_file())
+            .collect::<Vec<_>>();
+        if candidates.len() < 2 {
+            return;
+        }
+        candidates.sort_by_key(|path| Reverse(node_version_key(path.parent().unwrap_or(path))));
+        assert_eq!(
+            resolve_program_in_path("node", &runtime_path()).ok(),
+            candidates.first().cloned()
+        );
     }
 }

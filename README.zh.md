@@ -26,8 +26,8 @@ DeepSeek Desktop 是一个面向本机 DeepSeek Harness 的非官方桌面启动
 ## 环境要求
 
 - 首选 macOS Apple Silicon；路径和进程层保留 Windows/Linux 扩展能力；
-- Node.js 20 或更高版本；
-- pnpm 10 或与 Harness 兼容的版本；
+- 当前 Harness 源码要求 Node.js 22.19 及以上的 22.x，或 Node.js 24 及以上；
+- 当前 Harness 源码要求 pnpm 11.7 或更高版本；
 - Git；
 - Rust stable 及 Tauri 本地桌面构建所需系统依赖；
 - 已有 Harness 源码目录，或可访问的 Git URL；
@@ -67,8 +67,9 @@ macOS 首次打开可能需要在“系统设置”中手动允许。
 5. 如果源码不存在，点击“首次安装”。应用使用参数数组调用 Git，
    只会 clone 到指定目标目录。
 6. 检查依赖卡片；缺失工具会显示修复建议。
-7. 如果 Harness 要求预先构建产物，先按 Harness 自己的文档完成构建，
-   再启动 Web 服务。
+7. 如果总览显示依赖或构建产物缺失，点击“安装依赖并构建”。应用会执行已
+   配置的安装和构建命令并提供实时日志；预期产物生成前，“启动服务”会保持
+   禁用。
 
 默认启动命令等价于：
 
