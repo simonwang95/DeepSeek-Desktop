@@ -89,6 +89,14 @@ pnpm dsh web --no-open
 
 The default Harness Web port is `3080`, matching the Harness README.
 
+On macOS, a Finder-launched app does not inherit the interactive terminal
+`PATH`. The desktop service now reads the login-shell PATH and searches common
+NVM, Homebrew, Volta, and pnpm locations before running Git, Node, or pnpm. If
+your tools use a custom location, enter the absolute executable path in
+**设置**. If an existing configuration still says `main` while the remote has
+changed to `master`, update checks verify the configured branch first and then
+fall back to the remote default branch without rewriting your configuration.
+
 ## Safe lifecycle and update behavior
 
 The app records its own configuration and runtime record in the platform

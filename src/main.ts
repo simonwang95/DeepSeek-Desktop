@@ -35,7 +35,7 @@ function fallbackConfig(): AppConfig {
     harness: {
       sourceDir: "",
       repoUrl: "https://github.com/deepseek-ai/deepseek-harness.git",
-      branch: "main",
+      branch: "master",
       port: 3080,
       startCommand: { program: "pnpm", args: ["dsh", "web", "--no-open"] },
       installCommand: { program: "pnpm", args: ["install", "--frozen-lockfile"] },

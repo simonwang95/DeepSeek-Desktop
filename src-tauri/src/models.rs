@@ -173,7 +173,7 @@ impl Default for AppConfig {
             harness: HarnessConfig {
                 source_dir,
                 repo_url: "https://github.com/deepseek-ai/deepseek-harness.git".into(),
-                branch: "main".into(),
+                branch: "master".into(),
                 port: 3080,
                 start_command: CommandConfig {
                     program: "pnpm".into(),

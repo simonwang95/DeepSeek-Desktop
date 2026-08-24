@@ -8,13 +8,14 @@ use models::{
     LogEntry, ManagedProcess, OperationProgress, ProcessRecord, UpdatePhase,
 };
 use serde::{Deserialize, Serialize};
+use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -206,11 +207,96 @@ struct CommandResult {
     stderr: String,
 }
 
+static RUNTIME_PATH: OnceLock<OsString> = OnceLock::new();
+
+fn add_runtime_path(paths: &mut Vec<PathBuf>, path: PathBuf) {
+    if path.is_dir() && !paths.iter().any(|existing| existing == &path) {
+        paths.push(path);
+    }
+}
+
+fn build_runtime_path() -> OsString {
+    let mut paths = Vec::new();
+
+    if let Some(path) = std::env::var_os("PATH") {
+        paths.extend(std::env::split_paths(&path));
+    }
+
+    // Finder-launched apps do not inherit the interactive shell PATH. Reading
+    // the fixed login-shell command lets NVM, Homebrew, Volta, and pnpm
+    // installations work without passing user input through a shell.
+    if cfg!(target_os = "macos") {
+        if let Ok(output) = Command::new("/bin/zsh")
+            .args(["-lc", "printf '%s' \"$PATH\""])
+            .output()
+        {
+            if output.status.success() {
+                let shell_path = String::from_utf8_lossy(&output.stdout);
+                paths.extend(std::env::split_paths(OsStr::new(shell_path.trim())));
+            }
+        }
+        for path in ["/opt/homebrew/bin", "/opt/homebrew/sbin", "/usr/local/bin"] {
+            add_runtime_path(&mut paths, PathBuf::from(path));
+        }
+    }
+
+    if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
+        for relative in [
+            ".local/bin",
+            ".local/share/pnpm",
+            "Library/pnpm",
+            ".volta/bin",
+            ".asdf/shims",
+            ".cargo/bin",
+        ] {
+            add_runtime_path(&mut paths, home.join(relative));
+        }
+        let nvm_versions = home.join(".nvm/versions/node");
+        if let Ok(entries) = fs::read_dir(nvm_versions) {
+            for entry in entries.flatten() {
+                add_runtime_path(&mut paths, entry.path().join("bin"));
+            }
+        }
+    }
+
+    std::env::join_paths(paths).unwrap_or_default()
+}
+
+fn runtime_path() -> OsString {
+    RUNTIME_PATH.get_or_init(build_runtime_path).clone()
+}
+
+fn resolve_program_in_path(program: &str, path: &OsStr) -> Result<PathBuf, AppError> {
+    if program.contains('/') || program.contains('\\') {
+        return Ok(PathBuf::from(program));
+    }
+    for directory in std::env::split_paths(path) {
+        let candidate = directory.join(program);
+        if candidate.is_file() {
+            return Ok(candidate);
+        }
+    }
+    Err(AppError::Message(format!(
+        "找不到可执行文件 {program}。Finder 启动的应用没有继承终端 PATH，请在设置中填入绝对路径，或确认已安装 Git、Node.js 和 pnpm"
+    )))
+}
+
+fn command_for(program: &str) -> Result<Command, AppError> {
+    let path = runtime_path();
+    let resolved = resolve_program_in_path(program, &path)?;
+    let mut command = Command::new(resolved);
+    command.env("PATH", path);
+    Ok(command)
+}
+
+fn command_for_spec(spec: &CommandSpec) -> Result<Command, AppError> {
+    let mut command = command_for(&spec.program)?;
+    command.args(&spec.args);
+    Ok(command)
+}
+
 fn command_output(spec: &CommandSpec, cwd: &Path) -> Result<CommandResult, AppError> {
-    let output = Command::new(&spec.program)
-        .args(&spec.args)
-        .current_dir(cwd)
-        .output()?;
+    let output = command_for_spec(spec)?.current_dir(cwd).output()?;
     Ok(CommandResult {
         status: output.status,
         stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
@@ -229,9 +315,8 @@ fn run_logged(
         "system",
         format!("执行 {label}: {} {}", spec.program, spec.args.join(" ")),
     );
-    let mut command = Command::new(&spec.program);
+    let mut command = command_for_spec(spec)?;
     command
-        .args(&spec.args)
         .current_dir(cwd)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -321,6 +406,98 @@ fn git_value(source: &Path, args: &[&str]) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
+fn parse_remote_default_branch(value: &str) -> Option<String> {
+    value.lines().find_map(|line| {
+        let mut fields = line.split_whitespace();
+        if fields.next()? != "ref:" {
+            return None;
+        }
+        let reference = fields.next()?;
+        if fields.next()? != "HEAD" {
+            return None;
+        }
+        reference
+            .strip_prefix("refs/heads/")
+            .filter(|branch| !branch.is_empty())
+            .map(str::to_string)
+    })
+}
+
+fn remote_branch_exists(source: &Path, remote: &str, branch: &str) -> bool {
+    let reference = format!("refs/heads/{branch}");
+    let args = ["ls-remote", "--exit-code", "--heads", remote, &reference];
+    command_output(&git_spec(&args), source)
+        .map(|result| result.status.success())
+        .unwrap_or(false)
+}
+
+fn local_remote_branch_exists(source: &Path, remote: &str, branch: &str) -> bool {
+    let reference = format!("refs/remotes/{remote}/{branch}");
+    let args = ["show-ref", "--verify", "--quiet", &reference];
+    command_output(&git_spec(&args), source)
+        .map(|result| result.status.success())
+        .unwrap_or(false)
+}
+
+fn local_remote_default_branch(source: &Path, remote: &str) -> Option<String> {
+    let reference = format!("refs/remotes/{remote}/HEAD");
+    let args = ["symbolic-ref", "--short", &reference];
+    let prefix = format!("{remote}/");
+    git_value(source, &args).and_then(|value| value.strip_prefix(&prefix).map(str::to_string))
+}
+
+fn remote_default_branch(source: &Path, remote: &str) -> Option<String> {
+    let args = ["ls-remote", "--symref", remote, "HEAD"];
+    command_output(&git_spec(&args), source)
+        .ok()
+        .filter(|result| result.status.success())
+        .and_then(|result| parse_remote_default_branch(&result.stdout))
+}
+
+fn resolve_update_branch(
+    source: &Path,
+    remote: &str,
+    configured_branch: &str,
+) -> Result<String, AppError> {
+    if local_remote_branch_exists(source, remote, configured_branch) {
+        return Ok(configured_branch.to_string());
+    }
+    if remote_branch_exists(source, remote, configured_branch) {
+        return Ok(configured_branch.to_string());
+    }
+    if let Some(branch) = local_remote_default_branch(source, remote) {
+        return Ok(branch);
+    }
+    if let Some(branch) = remote_default_branch(source, remote) {
+        return Ok(branch);
+    }
+    if let Some(branch) = git_value(source, &["rev-parse", "--abbrev-ref", "HEAD"]) {
+        if branch != "HEAD" {
+            return Ok(branch);
+        }
+    }
+    Err(AppError::Message(format!(
+        "配置的远程分支 {configured_branch} 不存在，且无法确定 {remote} 的默认分支"
+    )))
+}
+
+fn resolved_update_branch(
+    app: &AppHandle,
+    source: &Path,
+    remote: &str,
+    configured_branch: &str,
+) -> Result<String, AppError> {
+    let branch = resolve_update_branch(source, remote, configured_branch)?;
+    if branch != configured_branch {
+        emit_log(
+            app,
+            "system",
+            format!("配置分支 {configured_branch} 不存在，已改用远程默认分支 {branch}"),
+        );
+    }
+    Ok(branch)
+}
+
 fn inspect_harness(app: &AppHandle, state: &AppState) -> Result<HarnessStatus, AppError> {
     refresh_managed_process(app, state)?;
     let config = state.config()?;
@@ -406,7 +583,8 @@ fn dependency_statuses(state: &AppState) -> Result<Vec<DependencyStatus>, AppErr
     let mut result = Vec::new();
     for (name, program, args, suggestion) in items {
         let spec = CommandSpec { program, args };
-        let value = Command::new(&spec.program).args(&spec.args).output();
+        let value = command_for_spec(&spec)
+            .and_then(|mut command| command.output().map_err(AppError::from));
         match value {
             Ok(output) if output.status.success() => result.push(DependencyStatus {
                 name: name.into(),
@@ -461,7 +639,8 @@ fn refresh_managed_process(app: &AppHandle, state: &AppState) -> Result<(), AppE
 fn process_commandline(pid: u32) -> Option<String> {
     #[cfg(unix)]
     {
-        let output = Command::new("ps")
+        let output = command_for("ps")
+            .ok()?
             .args(["-p", &pid.to_string(), "-o", "command="])
             .output()
             .ok()?;
@@ -471,7 +650,8 @@ fn process_commandline(pid: u32) -> Option<String> {
     }
     #[cfg(windows)]
     {
-        let output = Command::new("wmic")
+        let output = command_for("wmic")
+            .ok()?
             .args([
                 "process",
                 "where",
@@ -492,7 +672,8 @@ fn process_commandline(pid: u32) -> Option<String> {
 fn process_cwd(pid: u32) -> Option<String> {
     #[cfg(target_os = "macos")]
     {
-        let output = Command::new("lsof")
+        let output = command_for("lsof")
+            .ok()?
             .args(["-a", "-p", &pid.to_string(), "-d", "cwd", "-Fn"])
             .output()
             .ok()?;
@@ -622,9 +803,8 @@ fn start_process(app: &AppHandle, state: &AppState) -> Result<(), AppError> {
         )));
     }
     let spec = command_from(&config.harness.start_command)?;
-    let mut command = Command::new(&spec.program);
+    let mut command = command_for_spec(&spec)?;
     command
-        .args(&spec.args)
         .current_dir(&source)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -719,9 +899,9 @@ fn send_signal(pid: u32, signal: &str) -> Result<(), AppError> {
     #[cfg(unix)]
     {
         let group = format!("-{pid}");
-        let result = Command::new("kill").args([signal, &group]).status()?;
+        let result = command_for("kill")?.args([signal, &group]).status()?;
         if !result.success() {
-            let _ = Command::new("kill")
+            let _ = command_for("kill")?
                 .args([signal, &pid.to_string()])
                 .status()?;
         }
@@ -730,7 +910,7 @@ fn send_signal(pid: u32, signal: &str) -> Result<(), AppError> {
     #[cfg(windows)]
     {
         if signal == "-TERM" {
-            let _ = Command::new("taskkill")
+            let _ = command_for("taskkill")?
                 .args(["/PID", &pid.to_string(), "/T"])
                 .status()?;
         }
@@ -1001,7 +1181,7 @@ fn check_harness_update(
         return Err(AppError::Message("尚未安装 Harness 源码".into()));
     }
     let remote = config.update.remote_name;
-    let branch = config.harness.branch;
+    let branch = resolved_update_branch(&app, &source, &remote, &config.harness.branch)?;
     let result = run_logged(
         &app,
         &git_spec(&["fetch", "--dry-run", "--prune", &remote, &branch]),
@@ -1134,7 +1314,7 @@ fn run_harness_update_inner(
         return Err(AppError::Message("更新已取消".into()));
     }
     let remote = config.update.remote_name;
-    let branch = config.harness.branch;
+    let branch = resolved_update_branch(&app, &source, &remote, &config.harness.branch)?;
     emit_progress(
         &app,
         &state,
@@ -1278,11 +1458,11 @@ fn open_web_ui(url: String) -> Result<(), AppError> {
         )));
     }
     #[cfg(target_os = "macos")]
-    let result = Command::new("open").arg(&url).status()?;
+    let result = command_for("open")?.arg(&url).status()?;
     #[cfg(target_os = "linux")]
-    let result = Command::new("xdg-open").arg(&url).status()?;
+    let result = command_for("xdg-open")?.arg(&url).status()?;
     #[cfg(windows)]
-    let result = Command::new("explorer.exe").arg(&url).status()?;
+    let result = command_for("explorer.exe")?.arg(&url).status()?;
     if result.success() {
         Ok(())
     } else {
@@ -1332,13 +1512,15 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::models::AppConfig;
-    use super::start_failure_message;
     use super::validation;
+    use super::{parse_remote_default_branch, resolve_program_in_path, start_failure_message};
+    use std::ffi::OsStr;
 
     #[test]
     fn default_config_does_not_touch_harness_user_config() {
         let config = AppConfig::default();
         assert_eq!(config.lm_studio.api_url, "http://127.0.0.1:1234/v1/models");
+        assert_eq!(config.harness.branch, "master");
         assert!(validation::validate_config(&config).is_ok());
     }
 
@@ -1354,5 +1536,23 @@ mod tests {
         assert!(start_failure_message(3080, true).contains("进程已退出"));
         assert!(start_failure_message(3080, false).contains("仍在运行"));
         assert!(start_failure_message(3080, true).contains("3080"));
+    }
+
+    #[test]
+    fn parses_remote_default_branch() {
+        let output = "ref: refs/heads/master\tHEAD\n012345\tHEAD\n";
+        assert_eq!(
+            parse_remote_default_branch(output).as_deref(),
+            Some("master")
+        );
+        assert!(parse_remote_default_branch("012345\tHEAD\n").is_none());
+    }
+
+    #[test]
+    fn explains_missing_program_for_finder_launch() {
+        let error = resolve_program_in_path("pnpm", OsStr::new("/definitely/missing"))
+            .expect_err("missing program should be reported");
+        assert!(error.to_string().contains("Finder"));
+        assert!(error.to_string().contains("pnpm"));
     }
 }

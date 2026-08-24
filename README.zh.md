@@ -78,6 +78,13 @@ pnpm dsh web --no-open
 
 默认 Harness Web 端口为 `3080`，与 Harness README 保持一致。
 
+macOS 从 Finder 启动 `.app` 时不会继承终端里的交互式 `PATH`。桌面端现在
+会读取登录 Shell 的 PATH，并搜索常见的 NVM、Homebrew、Volta 和 pnpm 路径，
+再运行 Git、Node 或 pnpm。如果工具安装在自定义目录，可以在“设置”里填入
+可执行文件的绝对路径。若旧配置仍是 `main`、而远程仓库已经使用 `master`，
+更新检查会先验证配置分支，再自动回退到远程默认分支，但不会擅自改写你的
+配置。
+
 ## 安全启停和更新
 
 应用自身的设置和运行态保存在操作系统应用数据目录中。运行态包含 PID、
