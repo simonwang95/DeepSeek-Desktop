@@ -14,6 +14,10 @@ export async function installHarness(): Promise<void> {
   return invoke<void>("install_harness");
 }
 
+export async function installSystemDependencies(): Promise<void> {
+  return invoke<void>("install_system_dependencies");
+}
+
 export async function prepareHarness(): Promise<void> {
   return invoke<void>("prepare_harness");
 }

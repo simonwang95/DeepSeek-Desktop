@@ -5,6 +5,7 @@ import {
   checkLmStudio,
   getSnapshot,
   installHarness,
+  installSystemDependencies,
   openWebUi,
   prepareHarness,
   restartHarness,
@@ -144,16 +145,20 @@ function renderOverview(current: AppSnapshot): string {
   const error = errorMessage ? '<div class="alert danger-alert"><strong>需要处理</strong><span>' + escapeHtml(errorMessage) +
     '</span><button class="icon-button" data-action="dismissError">×</button></div>' : "";
   const install = current.harness.branch === null ? '<button class="secondary-button" data-action="install" ' + (busy ? "disabled" : "") + '>首次安装</button>' : "";
-  const dependenciesReady = current.harness.dependencies.every((dependency) => dependency.available);
+  const dependenciesReady = current.harness.dependencies.length > 0 && current.harness.dependencies.every((dependency) => dependency.available);
+  const missingSystemDependencies = current.harness.dependencies.some((dependency) => !dependency.available);
   const needsPreparation = current.harness.branch !== null && (!dependenciesReady || current.harness.buildArtifactsPresent === false);
-  const prepare = needsPreparation ? '<button class="primary-button" data-action="prepare" ' + (busy || current.harness.serviceRunning ? "disabled" : "") + '>安装依赖并构建</button>' : "";
-  const startBlocked = current.harness.branch === null || !dependenciesReady || current.harness.buildArtifactsPresent === false;
+  const prepare = needsPreparation ? '<button class="primary-button" data-action="prepare" ' + (busy || current.harness.serviceRunning || !dependenciesReady ? "disabled" : "") + '>' + (current.harness.buildArtifactsPresent === false ? "重新安装依赖并构建" : "安装依赖并构建") + '</button>' : "";
+  const systemInstall = missingSystemDependencies ? '<button class="secondary-button" data-action="installSystemDependencies" ' + (busy || current.harness.serviceRunning ? "disabled" : "") + '>安装系统依赖</button>' : "";
+  const startBlocked = current.harness.branch === null || !dependenciesReady;
+  const startLabel = current.harness.buildArtifactsPresent === false ? "启动并自动准备" : "启动服务";
+  const preparationHint = current.harness.buildArtifactsPresent === false ? '<p class="hint">首次启动会自动安装 Harness 依赖并构建 Web 产物，完成后再启动服务。</p>' : "";
   const open = current.harness.webUrl ? '<button class="secondary-button" data-action="openWeb" ' + (busy ? "disabled" : "") + '>打开 Web UI</button>' : "";
   const models = lm.models.length ? lm.models.map((model) => '<span class="model-pill">' + escapeHtml(model) + "</span>").join("") :
     '<span class="muted">未读取到已加载模型</span>';
   return '<main class="content"><section class="hero"><div><span class="eyebrow">UNOFFICIAL LOCAL LAUNCHER</span><h1>Harness 总览</h1>' +
     "<p>管理本机 DeepSeek Harness 的源码、进程、构建和更新。</p></div><div class=\"hero-actions\">" +
-    '<button class="primary-button" data-action="start" ' + (busy || current.harness.serviceRunning || startBlocked ? "disabled" : "") + '>启动服务</button>' +
+    '<button class="primary-button" data-action="start" ' + (busy || current.harness.serviceRunning || startBlocked ? "disabled" : "") + '>' + startLabel + '</button>' +
     '<button class="secondary-button" data-action="stop" ' + (busy || (!current.harness.serviceRunning && !current.harness.orphanedProcess) ? "disabled" : "") + '>停止服务</button>' +
     '<button class="secondary-button" data-action="restart" ' + (busy ? "disabled" : "") + '>重启</button>' + open + '</div></section>' + error +
     progressHtml(current.lastProgress) + '<section class="metrics-grid">' +
@@ -171,9 +176,9 @@ function renderOverview(current: AppSnapshot): string {
     '<div><dt>源码目录</dt><dd class="path-value">' + escapeHtml(current.config.harness.sourceDir || "尚未配置") + "</dd></div>" +
     "<div><dt>Git 工作区</dt><dd>" + (current.harness.dirty === null ? "—" : current.harness.dirty ? "有未提交或未跟踪文件" : "干净") + "</dd></div>" +
     "<div><dt>上游更新</dt><dd>" + escapeHtml(updateHint) + "</dd></div><div><dt>构建产物</dt><dd>" +
-    (current.harness.buildArtifactsPresent === null ? "—" : current.harness.buildArtifactsPresent ? "存在" : "未找到（请先构建）") + "</dd></div></dl>" +
+    (current.harness.buildArtifactsPresent === null ? "—" : current.harness.buildArtifactsPresent ? "存在" : "未找到（启动时自动准备）") + "</dd></div></dl>" + preparationHint +
     '<div class="dependency-list">' + dependencyRows(current.harness) + '</div><div class="inline-actions"><button class="secondary-button" data-action="checkUpdate" ' + (busy ? "disabled" : "") + '>检查更新</button>' +
-    '<button class="primary-button" data-action="safeUpdate" ' + (busy || current.harness.branch === null ? "disabled" : "") + '>安全更新</button>' + prepare + install + "</div></article>" +
+    '<button class="primary-button" data-action="safeUpdate" ' + (busy || current.harness.branch === null ? "disabled" : "") + '>安全更新</button>' + systemInstall + prepare + install + "</div></article>" +
     '<article class="panel"><div class="section-heading"><div><span class="eyebrow">LM STUDIO</span><h2>模型连接</h2></div>' +
     '<button class="secondary-button small-button" data-action="checkLm" ' + (busy ? "disabled" : "") + '>重新检测</button></div>' +
     '<div class="lm-url">' + escapeHtml(lm.apiUrl) + "</div>" + (lm.error ? '<div class="inline-error">' + escapeHtml(lm.error) + "</div>" : "") +
@@ -232,6 +237,7 @@ async function handleAction(action: string): Promise<void> {
   if (action === "restart") { await runAction(restartHarness, "重启请求已完成"); return; }
   if (action === "openWeb" && snapshot?.harness.webUrl) { await runAction(() => openWebUi(snapshot?.harness.webUrl ?? ""), "已请求打开 Web UI"); return; }
   if (action === "install") { await runAction(installHarness, "首次安装完成"); return; }
+  if (action === "installSystemDependencies") { await runAction(installSystemDependencies, "系统依赖安装完成，请重新检测"); return; }
   if (action === "prepare") { await runAction(prepareHarness, "依赖安装和构建完成"); return; }
   if (action === "checkUpdate") { await runAction(checkHarnessUpdate, "更新检查完成"); return; }
   if (action === "checkLm") { await runAction(checkLmStudio, "LM Studio 检测完成"); return; }

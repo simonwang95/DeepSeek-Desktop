@@ -28,7 +28,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["app", "dmg"],
+    "targets": "all",
     "icon": ["icons/icon.png"],
     "createUpdaterArtifacts": false,
     "macOS": {

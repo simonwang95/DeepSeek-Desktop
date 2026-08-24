@@ -30,8 +30,8 @@ completed without the required Apple credentials.
 
 ## Requirements
 
-- macOS Apple Silicon is the first supported target; Windows and Linux are
-  kept in the process-management and path-validation design.
+- macOS Apple Silicon and Windows are supported targets; Linux remains covered
+  in the process-management and path-validation design.
 - Node.js 22.19 or newer in the 22 line, or Node.js 24 or newer, for the
   current Harness checkout.
 - pnpm 11.7 or newer for the current Harness checkout.
@@ -54,8 +54,8 @@ The browser-only UI can be previewed with `pnpm dev`. It will show a clear
 backend-unavailable message because process control is only available inside
 Tauri.
 
-For normal use, build the bundled macOS application and open the generated
-`.app` from Finder:
+For normal use, build the bundled desktop application and open the generated
+package from the target OS. On macOS:
 
 ```
 pnpm tauri:build
@@ -69,6 +69,11 @@ directory for installation or sharing. Without Apple signing and
 notarization, macOS may require an explicit first-launch approval in System
 Settings.
 
+On Windows, `pnpm tauri build` produces the Windows installer formats selected
+by Tauri. The target machine needs WebView2; current Windows versions normally
+provide it, and the installer can bootstrap it when required. Development mode
+still uses a terminal because it runs Vite.
+
 ## First setup
 
 1. Open **设置**.
@@ -76,13 +81,16 @@ Settings.
    directory.
 3. Confirm the upstream Git URL, branch, and Web port.
 4. Save settings.
-5. If the checkout is absent, choose **首次安装**. The app invokes Git with
-   an argument array and clones only into the configured target.
-6. Check the dependency cards. Missing tools include a concrete repair hint.
-7. If the dashboard reports missing dependencies or build artifacts, click
-   **安装依赖并构建**. The app will run the configured install and build
-   commands with live logs and will keep **启动服务** disabled until the
-   expected artifacts exist.
+5. Check the dependency cards. If Git, Node.js, or pnpm is missing or too old,
+   click **安装系统依赖**. On macOS this uses Homebrew; on Windows it uses
+   winget. The package manager must already be installed, and the operation is
+   always started by an explicit button click.
+6. If the checkout is absent, choose **首次安装**. The app invokes Git with an
+   argument array, clones only into the configured target, and then automatically
+   installs the locked Harness dependencies and builds the Web artifacts.
+7. If an existing checkout has no build artifacts, **启动并自动准备** performs
+   the same dependency installation and build before starting the service. The
+   separate **安装依赖并构建** button remains available for a manual retry.
 
 The default service command is equivalent to:
 
@@ -94,11 +102,13 @@ The default Harness Web port is `3080`, matching the Harness README.
 
 On macOS, a Finder-launched app does not inherit the interactive terminal
 `PATH`. The desktop service now reads the login-shell PATH and searches common
-NVM, Homebrew, Volta, and pnpm locations before running Git, Node, or pnpm. If
-your tools use a custom location, enter the absolute executable path in
-**设置**. If an existing configuration still says `main` while the remote has
-changed to `master`, update checks verify the configured branch first and then
-fall back to the remote default branch without rewriting your configuration.
+NVM, Homebrew, Volta, and pnpm locations before running Git, Node, or pnpm. On
+Windows it also recognizes `.exe`, `.cmd`, and `.bat` command wrappers and
+common npm/pnpm installation directories. If your tools use a custom location,
+enter the absolute executable path in **设置**. If an existing configuration
+still says `main` while the remote has changed to `master`, update checks verify
+the configured branch first and then fall back to the remote default branch
+without rewriting your configuration.
 
 ## Safe lifecycle and update behavior
 

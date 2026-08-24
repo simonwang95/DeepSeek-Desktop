@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { lmStudioSummary, startBlocker, workspaceDecision } from "../src/domain/decision";
+import { lmStudioSummary, needsPreparation, startBlocker, workspaceDecision } from "../src/domain/decision";
 import { buildCommandFor, installCommandFor, startCommandFor, validatePort, validateRepoUrl, validateSourceDir } from "../src/domain/commands";
 import { createUpdateMachine, enterPhase, failUpdate } from "../src/domain/updateMachine";
 import type { HarnessStatus } from "../src/types";
@@ -49,7 +49,8 @@ describe("启动与更新决策", () => {
     expect(startBlocker({ ...baseStatus, port: 3080 })).toBe("portConflict");
     expect(startBlocker({ ...baseStatus, orphanedProcess: true })).toBe("orphanedProcess");
     expect(startBlocker({ ...baseStatus, dependencies: [{ ...baseStatus.dependencies[0], available: false }] })).toBe("missingDependencies");
-    expect(startBlocker({ ...baseStatus, buildArtifactsPresent: false })).toBe("missingBuildArtifacts");
+    expect(startBlocker({ ...baseStatus, buildArtifactsPresent: false })).toBeNull();
+    expect(needsPreparation({ ...baseStatus, buildArtifactsPresent: false })).toBe(true);
   });
 
   it("脏工作区默认中止，显式选择后才创建 stash", () => {

@@ -25,7 +25,7 @@ DeepSeek Desktop 是一个面向本机 DeepSeek Harness 的非官方桌面启动
 
 ## 环境要求
 
-- 首选 macOS Apple Silicon；路径和进程层保留 Windows/Linux 扩展能力；
+- 支持 macOS Apple Silicon 和 Windows；路径和进程层保留 Linux 扩展能力；
 - 当前 Harness 源码要求 Node.js 22.19 及以上的 22.x，或 Node.js 24 及以上；
 - 当前 Harness 源码要求 pnpm 11.7 或更高版本；
 - Git；
@@ -46,17 +46,18 @@ pnpm tauri:dev
 `pnpm dev` 可以只预览浏览器界面；由于进程管理只在 Tauri 环境内可用，
 浏览器预览会显示明确的“桌面后端不可用”提示。
 
-日常使用应构建并打开 macOS 应用包：
+日常使用应构建并打开目标系统的应用包。macOS 示例：
 
 ```
 pnpm tauri:build
 open "src-tauri/target/release/bundle/macos/DeepSeek Desktop.app"
 ```
 
-这样可以直接从 Finder 启动应用，不需要额外开着终端。`pnpm tauri:dev`
-同时运行 Vite 开发服务器，因此开发模式需要终端窗口是正常的。构建还会
-在同一目录生成 `.dmg`，可用于安装或分发。当前没有 Apple 签名和公证时，
-macOS 首次打开可能需要在“系统设置”中手动允许。
+这样可以直接从 Finder 启动应用，不需要额外开着终端。Windows 上运行
+`pnpm tauri build` 会生成 Tauri 支持的 Windows 安装包；目标机器需要
+WebView2，较新的 Windows 通常已经自带。`pnpm tauri:dev` 同时运行 Vite
+开发服务器，因此开发模式需要终端窗口是正常的。当前没有 Apple 签名和
+公证时，macOS 首次打开可能需要在“系统设置”中手动允许。
 
 ## 首次设置
 
@@ -64,12 +65,13 @@ macOS 首次打开可能需要在“系统设置”中手动允许。
 2. 选择 Harness 源码目录。应用不会覆盖非空目录。
 3. 确认上游 Git URL、分支和 Web 端口。
 4. 保存设置。
-5. 如果源码不存在，点击“首次安装”。应用使用参数数组调用 Git，
-   只会 clone 到指定目标目录。
-6. 检查依赖卡片；缺失工具会显示修复建议。
-7. 如果总览显示依赖或构建产物缺失，点击“安装依赖并构建”。应用会执行已
-   配置的安装和构建命令并提供实时日志；预期产物生成前，“启动服务”会保持
-   禁用。
+5. 检查依赖卡片。如果 Git、Node.js 或 pnpm 缺失或版本过低，点击“安装系统
+   依赖”。macOS 使用 Homebrew，Windows 使用 winget；包管理器本身需要先
+   安装，而且只有你明确点击按钮后才会执行。
+6. 如果源码不存在，点击“首次安装”。应用使用参数数组调用 Git，只会 clone
+   到指定目标目录，然后自动安装锁定的 Harness 依赖并构建 Web 产物。
+7. 如果已有源码但缺少构建产物，点击“启动并自动准备”。应用会先执行依赖
+   安装和构建再启动服务；“安装依赖并构建”按钮仍可用于手动重试。
 
 默认启动命令等价于：
 
@@ -81,7 +83,8 @@ pnpm dsh web --no-open
 
 macOS 从 Finder 启动 `.app` 时不会继承终端里的交互式 `PATH`。桌面端现在
 会读取登录 Shell 的 PATH，并搜索常见的 NVM、Homebrew、Volta 和 pnpm 路径，
-再运行 Git、Node 或 pnpm。如果工具安装在自定义目录，可以在“设置”里填入
+再运行 Git、Node 或 pnpm。Windows 还会识别 `.exe`、`.cmd`、`.bat` 命令包装
+器及常见 npm/pnpm 安装目录。如果工具安装在自定义目录，可以在“设置”里填入
 可执行文件的绝对路径。若旧配置仍是 `main`、而远程仓库已经使用 `master`，
 更新检查会先验证配置分支，再自动回退到远程默认分支，但不会擅自改写你的
 配置。

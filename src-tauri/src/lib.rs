@@ -16,7 +16,7 @@ use std::net::{TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -208,8 +208,6 @@ struct CommandResult {
     stderr: String,
 }
 
-static RUNTIME_PATH: OnceLock<OsString> = OnceLock::new();
-
 fn add_runtime_path(paths: &mut Vec<PathBuf>, path: PathBuf) {
     if path.is_dir() && !paths.iter().any(|existing| existing == &path) {
         paths.push(path);
@@ -225,7 +223,11 @@ fn add_runtime_paths(paths: &mut Vec<PathBuf>, value: &OsStr) {
 fn build_runtime_path() -> OsString {
     let mut paths = Vec::new();
 
-    if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
+    let home = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from);
+
+    if let Some(home) = home.as_ref() {
         let nvm_versions = home.join(".nvm/versions/node");
         let mut nvm_bins = fs::read_dir(nvm_versions)
             .ok()
@@ -247,6 +249,15 @@ fn build_runtime_path() -> OsString {
             ".cargo/bin",
         ] {
             add_runtime_path(&mut paths, home.join(relative));
+        }
+    }
+
+    if cfg!(windows) {
+        if let Some(app_data) = std::env::var_os("APPDATA").map(PathBuf::from) {
+            add_runtime_path(&mut paths, app_data.join("npm"));
+        }
+        if let Some(local_app_data) = std::env::var_os("LOCALAPPDATA").map(PathBuf::from) {
+            add_runtime_path(&mut paths, local_app_data.join("pnpm"));
         }
     }
 
@@ -297,22 +308,60 @@ fn node_version_key(path: &Path) -> (u32, u32, u32) {
 }
 
 fn runtime_path() -> OsString {
-    RUNTIME_PATH.get_or_init(build_runtime_path).clone()
+    // Rebuild this value for every command. System dependency installation can
+    // add Node.js, pnpm, or Git to PATH while the desktop app is already open.
+    build_runtime_path()
 }
 
 fn resolve_program_in_path(program: &str, path: &OsStr) -> Result<PathBuf, AppError> {
     if program.contains('/') || program.contains('\\') {
         return Ok(PathBuf::from(program));
     }
+    let names = program_names(program);
+    let mut candidates = Vec::new();
     for directory in std::env::split_paths(path) {
-        let candidate = directory.join(program);
-        if candidate.is_file() {
+        for name in &names {
+            let candidate = directory.join(name);
+            if candidate.is_file() {
+                candidates.push(candidate);
+            }
+        }
+    }
+    if program == "node" {
+        if let Some((candidate, _)) = candidates
+            .into_iter()
+            .map(|candidate| {
+                let version = Command::new(&candidate)
+                    .arg("--version")
+                    .output()
+                    .ok()
+                    .filter(|output| output.status.success())
+                    .and_then(|output| parsed_version(&String::from_utf8_lossy(&output.stdout)))
+                    .unwrap_or((0, 0, 0));
+                (candidate, version)
+            })
+            .max_by_key(|(_, version)| *version)
+        {
             return Ok(candidate);
         }
+    } else if let Some(candidate) = candidates.into_iter().next() {
+        return Ok(candidate);
     }
     Err(AppError::Message(format!(
         "找不到可执行文件 {program}。Finder 启动的应用没有继承终端 PATH，请在设置中填入绝对路径，或确认已安装 Git、Node.js 和 pnpm"
     )))
+}
+
+fn program_names(program: &str) -> Vec<String> {
+    let mut names = vec![program.to_string()];
+    if cfg!(windows) && Path::new(program).extension().is_none() {
+        names.extend([
+            format!("{program}.exe"),
+            format!("{program}.cmd"),
+            format!("{program}.bat"),
+        ]);
+    }
+    names
 }
 
 fn command_for(program: &str) -> Result<Command, AppError> {
@@ -631,7 +680,11 @@ fn dependency_version_error(name: &str, version: &str) -> Option<String> {
 }
 
 fn artifact_paths_present(source: &Path, paths: &[String]) -> bool {
-    !paths.is_empty() && paths.iter().all(|path| source.join(path).exists())
+    // A build artifact alone is not enough for `pnpm dsh web`: a fresh checkout
+    // also needs the workspace links created by `pnpm install`.
+    source.join("node_modules").is_dir()
+        && !paths.is_empty()
+        && paths.iter().all(|path| source.join(path).exists())
 }
 
 fn dependency_statuses(state: &AppState) -> Result<Vec<DependencyStatus>, AppError> {
@@ -648,7 +701,7 @@ fn dependency_statuses(state: &AppState) -> Result<Vec<DependencyStatus>, AppErr
             "node",
             "node".to_string(),
             vec!["--version".into()],
-            "安装 Node.js 20 或更高版本".to_string(),
+            "安装 Node.js 22.19+ 或 24+".to_string(),
         ),
         (
             "pnpm",
@@ -731,20 +784,40 @@ fn process_commandline(pid: u32) -> Option<String> {
     }
     #[cfg(windows)]
     {
-        let output = command_for("wmic")
+        if let Ok(output) = command_for("wmic").and_then(|mut command| {
+            command
+                .args([
+                    "process",
+                    "where",
+                    &format!("ProcessId={pid}"),
+                    "get",
+                    "CommandLine",
+                    "/value",
+                ])
+                .output()
+                .map_err(AppError::from)
+        }) {
+            if output.status.success() {
+                let command = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if !command.is_empty() {
+                    return Some(command);
+                }
+            }
+        }
+
+        let script = format!(
+            "$p = Get-CimInstance Win32_Process -Filter 'ProcessId = {pid}'; $p.CommandLine"
+        );
+        let output = command_for("powershell")
             .ok()?
-            .args([
-                "process",
-                "where",
-                &format!("ProcessId={pid}"),
-                "get",
-                "CommandLine",
-                "/value",
-            ])
+            .args(["-NoProfile", "-NonInteractive", "-Command", &script])
             .output()
             .ok()?;
         if output.status.success() {
-            return Some(String::from_utf8_lossy(&output.stdout).trim().into());
+            let command = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !command.is_empty() {
+                return Some(command);
+            }
         }
     }
     None
@@ -777,6 +850,23 @@ fn record_alive(record: &ProcessRecord) -> bool {
     let command_matches = process_commandline(record.pid)
         .map(|command| command.contains("dsh") && command.contains("web"))
         .unwrap_or(false);
+    #[cfg(windows)]
+    if command_matches {
+        // Windows has no portable working-directory query for an arbitrary
+        // process. The command-line match still prevents trusting a reused
+        // PID unless it is the expected pnpm/node Harness web process.
+        return process_commandline(record.pid)
+            .map(|command| {
+                let lower = command.to_ascii_lowercase();
+                (lower.contains("pnpm") || lower.contains("node") || lower.contains("npm"))
+                    && record
+                        .command
+                        .iter()
+                        .skip(1)
+                        .all(|part| command.contains(part))
+            })
+            .unwrap_or(false);
+    }
     let cwd_matches = process_cwd(record.pid)
         .map(|cwd| Path::new(&cwd).starts_with(&record.source_dir))
         .unwrap_or(false);
@@ -887,9 +977,13 @@ fn start_process(app: &AppHandle, state: &AppState) -> Result<(), AppError> {
         )));
     }
     if !artifact_paths_present(&source, &config.harness.artifact_paths) {
-        return Err(AppError::Message(
-            "未找到 Harness 构建产物，请先点击“安装依赖并构建”".into(),
-        ));
+        emit_log(
+            app,
+            "system",
+            "未找到 Harness 构建产物，启动前自动安装依赖并构建",
+        );
+        state.cancel_requested.store(false, Ordering::SeqCst);
+        prepare_harness_reported(app, state)?;
     }
     if port_is_open(config.harness.port) {
         return Err(AppError::Message(format!(
@@ -1004,7 +1098,7 @@ fn send_signal(pid: u32, signal: &str) -> Result<(), AppError> {
     }
     #[cfg(windows)]
     {
-        if signal == "-TERM" {
+        if signal == "-INT" || signal == "-TERM" {
             let _ = command_for("taskkill")?
                 .args(["/PID", &pid.to_string(), "/T"])
                 .status()?;
@@ -1208,6 +1302,120 @@ fn detect_dependencies(state: State<'_, AppState>) -> Result<Vec<DependencyStatu
     dependency_statuses(&state)
 }
 
+fn system_dependency_commands() -> Result<Vec<CommandSpec>, AppError> {
+    #[cfg(target_os = "macos")]
+    {
+        command_for("brew")?;
+        return Ok(vec![CommandSpec {
+            program: "brew".into(),
+            args: vec!["install".into(), "git".into(), "node".into(), "pnpm".into()],
+        }]);
+    }
+
+    #[cfg(windows)]
+    {
+        command_for("winget")?;
+        let common_args = [
+            "install",
+            "--exact",
+            "--upgrade",
+            "--source",
+            "winget",
+            "--accept-source-agreements",
+            "--accept-package-agreements",
+        ];
+        return Ok([
+            ("Git.Git", "Git"),
+            ("OpenJS.NodeJS.LTS", "Node.js LTS"),
+            ("pnpm.pnpm", "pnpm"),
+        ]
+        .into_iter()
+        .map(|(package, _)| CommandSpec {
+            program: "winget".into(),
+            args: common_args
+                .into_iter()
+                .map(str::to_string)
+                .chain(["--id".into(), package.into()])
+                .collect(),
+        })
+        .collect());
+    }
+
+    #[allow(unreachable_code)]
+    Err(AppError::Message(
+        "当前系统没有安全的内置包管理器安装流程，请先手动安装 Git、Node.js 22.19+ 或 24+、pnpm 11.7+".into(),
+    ))
+}
+
+#[tauri::command]
+fn install_system_dependencies(app: AppHandle, state: State<'_, AppState>) -> Result<(), AppError> {
+    if state.managed_process.lock().map_err(lock_error)?.is_some() {
+        return Err(AppError::Message(
+            "Harness 正在运行，请先停止服务后再安装系统依赖".into(),
+        ));
+    }
+    let commands = system_dependency_commands().map_err(|error| match error {
+        AppError::Message(message) if message.contains("找不到可执行文件") => {
+            #[cfg(target_os = "macos")]
+            {
+                AppError::Message(
+                    "未找到 Homebrew。请先从 https://brew.sh 安装 Homebrew，再重试“安装系统依赖”"
+                        .into(),
+                )
+            }
+            #[cfg(windows)]
+            {
+                AppError::Message(
+                    "未找到 winget。请更新 App Installer 或手动安装 Git、Node.js 和 pnpm 后重试"
+                        .into(),
+                )
+            }
+            #[cfg(not(any(target_os = "macos", windows)))]
+            {
+                AppError::Message(message)
+            }
+        }
+        other => other,
+    })?;
+    state.cancel_requested.store(false, Ordering::SeqCst);
+    emit_progress(
+        &app,
+        &state,
+        UpdatePhase::InstallingDependencies,
+        "安装系统依赖",
+        Some("只会安装 Git、Node.js 和 pnpm，不会修改 Harness 源码".into()),
+        Some(10),
+        false,
+    );
+    for (index, command) in commands.iter().enumerate() {
+        let percent = 20 + (index as u8 * 25);
+        emit_progress(
+            &app,
+            &state,
+            UpdatePhase::InstallingDependencies,
+            "安装系统依赖",
+            Some(command.args.join(" ")),
+            Some(percent),
+            false,
+        );
+        ensure_success(
+            run_logged(&app, command, Path::new("."), "安装系统依赖")?,
+            "安装系统依赖",
+        )?;
+    }
+    set_action(&state, "系统依赖安装完成，请重新检测", None)?;
+    emit_progress(
+        &app,
+        &state,
+        UpdatePhase::Completed,
+        "系统依赖安装完成，请重新检测",
+        None,
+        Some(100),
+        false,
+    );
+    Ok(())
+}
+
 #[tauri::command]
 fn install_harness(app: AppHandle, state: State<'_, AppState>) -> Result<(), AppError> {
     let (config, source) = configured_source(&state)?;
@@ -1244,97 +1452,99 @@ fn install_harness(app: AppHandle, state: State<'_, AppState>) -> Result<(), App
         "git clone",
     )?;
     ensure_success(result, "git clone")?;
-    set_action(&state, "Harness 首次安装完成", None)?;
+    set_action(&state, "Harness 源码安装完成，正在准备依赖和构建", None)?;
+    state.cancel_requested.store(false, Ordering::SeqCst);
+    prepare_harness_reported(&app, &state)?;
     Ok(())
 }
 
-#[tauri::command]
-fn prepare_harness(app: AppHandle, state: State<'_, AppState>) -> Result<(), AppError> {
-    state.cancel_requested.store(false, Ordering::SeqCst);
-    let result = (|| {
-        if state.managed_process.lock().map_err(lock_error)?.is_some() || orphan_is_alive(&state)? {
-            return Err(AppError::Message(
-                "Harness 正在运行，请先停止服务后再安装依赖和构建".into(),
-            ));
-        }
-        let (config, source) = configured_source(&state)?;
-        if !source.is_dir() || !source.join(".git").exists() {
-            return Err(AppError::Message(
-                "找不到 Harness 源码，请先完成首次安装".into(),
-            ));
-        }
-        if let Some(dependency) = dependency_statuses(&state)?
-            .into_iter()
-            .find(|dependency| !dependency.available)
-        {
-            return Err(AppError::Message(format!(
-                "无法准备 Harness：{} 不可用。{}",
-                dependency.name, dependency.suggestion
-            )));
-        }
-        emit_progress(
-            &app,
-            &state,
-            UpdatePhase::Checking,
-            "准备 Harness 依赖和构建",
-            None,
-            Some(5),
-            true,
-        );
-        let install = command_from(&config.harness.install_command)?;
-        emit_progress(
-            &app,
-            &state,
-            UpdatePhase::InstallingDependencies,
-            "安装锁定依赖",
-            None,
-            Some(25),
-            true,
-        );
-        ensure_success(
-            run_logged(&app, &install, &source, "安装 Harness 依赖")?,
-            "安装 Harness 依赖",
-        )?;
-        if state.cancel_requested.load(Ordering::SeqCst) {
-            return Err(AppError::Message("准备构建已取消".into()));
-        }
-        let build = command_from(&config.harness.build_command)?;
-        emit_progress(
-            &app,
-            &state,
-            UpdatePhase::Building,
-            "构建 Harness Web 产物",
-            Some(config.harness.artifact_paths.join(", ")),
-            Some(65),
-            true,
-        );
-        ensure_success(
-            run_logged(&app, &build, &source, "构建 Harness")?,
-            "构建 Harness",
-        )?;
-        if !artifact_paths_present(&source, &config.harness.artifact_paths) {
-            return Err(AppError::Message(
-                "构建命令已结束，但仍未找到预期产物，请查看实时日志".into(),
-            ));
-        }
-        set_action(&state, "Harness 依赖和构建已完成", None)?;
-        emit_progress(
-            &app,
-            &state,
-            UpdatePhase::Completed,
-            "Harness 依赖和构建已完成",
-            None,
-            Some(100),
-            false,
-        );
-        Ok(())
-    })();
+fn prepare_harness_inner(app: &AppHandle, state: &AppState) -> Result<(), AppError> {
+    if state.managed_process.lock().map_err(lock_error)?.is_some() || orphan_is_alive(state)? {
+        return Err(AppError::Message(
+            "Harness 正在运行，请先停止服务后再安装依赖和构建".into(),
+        ));
+    }
+    let (config, source) = configured_source(state)?;
+    if !source.is_dir() || !source.join(".git").exists() {
+        return Err(AppError::Message(
+            "找不到 Harness 源码，请先完成首次安装".into(),
+        ));
+    }
+    if let Some(dependency) = dependency_statuses(state)?
+        .into_iter()
+        .find(|dependency| !dependency.available)
+    {
+        return Err(AppError::Message(format!(
+            "无法准备 Harness：{} 不可用。{}",
+            dependency.name, dependency.suggestion
+        )));
+    }
+    emit_progress(
+        app,
+        state,
+        UpdatePhase::Checking,
+        "准备 Harness 依赖和构建",
+        None,
+        Some(5),
+        true,
+    );
+    let install = command_from(&config.harness.install_command)?;
+    emit_progress(
+        app,
+        state,
+        UpdatePhase::InstallingDependencies,
+        "安装锁定依赖",
+        None,
+        Some(25),
+        true,
+    );
+    ensure_success(
+        run_logged(app, &install, &source, "安装 Harness 依赖")?,
+        "安装 Harness 依赖",
+    )?;
+    if state.cancel_requested.load(Ordering::SeqCst) {
+        return Err(AppError::Message("准备构建已取消".into()));
+    }
+    let build = command_from(&config.harness.build_command)?;
+    emit_progress(
+        app,
+        state,
+        UpdatePhase::Building,
+        "构建 Harness Web 产物",
+        Some(config.harness.artifact_paths.join(", ")),
+        Some(65),
+        true,
+    );
+    ensure_success(
+        run_logged(app, &build, &source, "构建 Harness")?,
+        "构建 Harness",
+    )?;
+    if !artifact_paths_present(&source, &config.harness.artifact_paths) {
+        return Err(AppError::Message(
+            "构建命令已结束，但仍未找到预期产物，请查看实时日志".into(),
+        ));
+    }
+    set_action(state, "Harness 依赖和构建已完成", None)?;
+    emit_progress(
+        app,
+        state,
+        UpdatePhase::Completed,
+        "Harness 依赖和构建已完成",
+        None,
+        Some(100),
+        false,
+    );
+    Ok(())
+}
+
+fn prepare_harness_reported(app: &AppHandle, state: &AppState) -> Result<(), AppError> {
+    let result = prepare_harness_inner(app, state);
     if let Err(error) = &result {
         let detail = error.to_string();
-        let _ = set_action(&state, "Harness 准备失败", Some(detail.clone()));
+        let _ = set_action(state, "Harness 准备失败", Some(detail.clone()));
         emit_progress(
-            &app,
-            &state,
+            app,
+            state,
             UpdatePhase::Failed,
             "Harness 准备失败，后续步骤已停止",
             Some(detail),
@@ -1343,6 +1553,12 @@ fn prepare_harness(app: AppHandle, state: State<'_, AppState>) -> Result<(), App
         );
     }
     result
+}
+
+#[tauri::command]
+fn prepare_harness(app: AppHandle, state: State<'_, AppState>) -> Result<(), AppError> {
+    state.cancel_requested.store(false, Ordering::SeqCst);
+    prepare_harness_reported(&app, &state)
 }
 
 #[tauri::command]
@@ -1687,6 +1903,7 @@ pub fn run() {
             get_snapshot,
             save_config,
             detect_dependencies,
+            install_system_dependencies,
             install_harness,
             prepare_harness,
             start_harness,
@@ -1770,6 +1987,15 @@ mod tests {
         assert!(!node_version_supported("v20.20.2"));
         assert!(pnpm_version_supported("11.7.0"));
         assert!(!pnpm_version_supported("10.33.0"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn recognizes_windows_command_wrappers() {
+        let names = super::program_names("pnpm");
+        assert!(names.iter().any(|name| name == "pnpm.exe"));
+        assert!(names.iter().any(|name| name == "pnpm.cmd"));
+        assert!(names.iter().any(|name| name == "pnpm.bat"));
     }
 
     #[cfg(target_os = "macos")]
