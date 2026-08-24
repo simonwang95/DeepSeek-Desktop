@@ -591,6 +591,14 @@ fn spawn_log_reader<R: Read + Send + 'static>(reader: R, app: AppHandle, stream:
     });
 }
 
+fn start_failure_message(port: u16, process_exited: bool) -> String {
+    if process_exited {
+        format!("Harness 进程已退出，端口 {port} 未监听；请查看实时日志并检查构建产物和启动命令")
+    } else {
+        format!("Harness 进程仍在运行，但端口 {port} 未监听；请查看实时日志")
+    }
+}
+
 fn start_process(app: &AppHandle, state: &AppState) -> Result<(), AppError> {
     refresh_managed_process(app, state)?;
     if state.managed_process.lock().map_err(lock_error)?.is_some() {
@@ -670,25 +678,39 @@ fn start_process(app: &AppHandle, state: &AppState) -> Result<(), AppError> {
             false,
         );
     } else {
-        let message = format!(
-            "Harness 进程已启动，但端口 {} 尚未监听；请查看实时日志",
-            config.harness.port
-        );
-        set_action(
-            state,
-            "Harness 进程已启动，等待 Web 端口",
-            Some(message.clone()),
-        )?;
+        let process_exited = state
+            .managed_process
+            .lock()
+            .map_err(lock_error)?
+            .as_ref()
+            .map(|managed| {
+                managed
+                    .child
+                    .lock()
+                    .map_err(lock_error)
+                    .and_then(|mut child| child.try_wait().map_err(AppError::from))
+                    .map(|status| status.is_some())
+            })
+            .transpose()?
+            .unwrap_or(false);
+        let message = start_failure_message(config.harness.port, process_exited);
+        set_action(state, "Harness 启动失败", Some(message.clone()))?;
         emit_log(app, "system", &message);
         emit_progress(
             app,
             state,
-            UpdatePhase::Completed,
-            "Harness 进程已启动，Web 端口尚未就绪",
+            UpdatePhase::Failed,
+            "Harness 启动失败，Web 端口未就绪",
             Some(format!("PID {pid}")),
-            Some(100),
+            None,
             false,
         );
+        if process_exited {
+            *state.managed_process.lock().map_err(lock_error)? = None;
+            *state.process_record.lock().map_err(lock_error)? = None;
+            state.save_runtime()?;
+        }
+        return Err(AppError::Message(message));
     }
     Ok(())
 }
@@ -1310,6 +1332,7 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::models::AppConfig;
+    use super::start_failure_message;
     use super::validation;
 
     #[test]
@@ -1324,5 +1347,12 @@ mod tests {
         assert!(super::parse_runtime_record("").is_none());
         assert!(super::parse_runtime_record("null").is_none());
         assert!(super::parse_runtime_record("not-json").is_none());
+    }
+
+    #[test]
+    fn explains_start_failure_when_process_exits_before_port_is_ready() {
+        assert!(start_failure_message(3080, true).contains("进程已退出"));
+        assert!(start_failure_message(3080, false).contains("仍在运行"));
+        assert!(start_failure_message(3080, true).contains("3080"));
     }
 }

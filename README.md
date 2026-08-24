@@ -22,8 +22,8 @@ provides a Tauri 2 + TypeScript UI and Rust application service with:
   optional explicit backup stash, fetch, fast-forward-only merge, dependency
   installation, configured build cleanup, rebuild, and conditional restart;
 - LM Studio `/v1/models` detection, model display, and error reporting;
-- automated domain tests, Rust tests, CI, and a no-bundle macOS development
-  build entry point.
+- automated domain tests, Rust tests, CI, and macOS `.app`/`.dmg` bundle
+  build entry points.
 
 The app deliberately does not pretend that code signing or notarization has
 completed without the required Apple credentials.
@@ -52,6 +52,21 @@ pnpm tauri:dev
 The browser-only UI can be previewed with `pnpm dev`. It will show a clear
 backend-unavailable message because process control is only available inside
 Tauri.
+
+For normal use, build the bundled macOS application and open the generated
+`.app` from Finder:
+
+```
+pnpm tauri:build
+open "src-tauri/target/release/bundle/macos/DeepSeek Desktop.app"
+```
+
+This starts the desktop app without leaving a terminal window open. The
+`pnpm tauri:dev` command is intentionally terminal-based because it also runs
+the Vite development server. The build also produces a `.dmg` in the same
+directory for installation or sharing. Without Apple signing and
+notarization, macOS may require an explicit first-launch approval in System
+Settings.
 
 ## First setup
 
@@ -125,12 +140,12 @@ pnpm typecheck
 pnpm test
 cargo test --manifest-path src-tauri/Cargo.toml
 pnpm build
-pnpm tauri build --no-bundle
+pnpm tauri:build
 ```
 
-`pnpm tauri:build` is an alias for the no-bundle desktop build. Bundling is
-disabled until signing and notarization credentials are available. The neutral
-placeholder icon is not a DeepSeek official logo.
+`pnpm tauri:build` creates the macOS `.app` and `.dmg`. Use
+`pnpm tauri:build:binary` only when a raw executable is needed for debugging or
+CI. The neutral placeholder icon is not a DeepSeek official logo.
 
 ## Release path
 
@@ -144,8 +159,8 @@ The two update channels remain separate:
 Before publishing a desktop release, configure Apple Developer signing,
 notarization credentials, updater signing keys, and private GitHub Actions
 secrets. Add those secrets only in the release environment; never commit them.
-The current CI intentionally builds the desktop binary without claiming a
-signed installer.
+The local bundle is currently unsigned; the CI compile job intentionally uses a
+no-bundle build and does not claim to produce a signed installer.
 
 ## Repository boundary
 

@@ -19,7 +19,7 @@ DeepSeek Desktop 是一个面向本机 DeepSeek Harness 的非官方桌面启动
 - 安全 Harness 更新流程：脏工作区保护、显式备份 stash、fetch、
   仅 fast-forward 更新、依赖安装、配置的构建清理、重建和条件重启；
 - LM Studio `/v1/models` 检测、模型列表和连接错误展示；
-- 核心决策测试、Rust 测试、GitHub Actions 和 macOS 无安装包开发构建入口。
+- 核心决策测试、Rust 测试、GitHub Actions 和 macOS `.app`/`.dmg` 打包入口。
 
 没有 Apple 证书时，应用不会伪造签名或公证成功。
 
@@ -45,6 +45,18 @@ pnpm tauri:dev
 
 `pnpm dev` 可以只预览浏览器界面；由于进程管理只在 Tauri 环境内可用，
 浏览器预览会显示明确的“桌面后端不可用”提示。
+
+日常使用应构建并打开 macOS 应用包：
+
+```
+pnpm tauri:build
+open "src-tauri/target/release/bundle/macos/DeepSeek Desktop.app"
+```
+
+这样可以直接从 Finder 启动应用，不需要额外开着终端。`pnpm tauri:dev`
+同时运行 Vite 开发服务器，因此开发模式需要终端窗口是正常的。构建还会
+在同一目录生成 `.dmg`，可用于安装或分发。当前没有 Apple 签名和公证时，
+macOS 首次打开可能需要在“系统设置”中手动允许。
 
 ## 首次设置
 
@@ -114,11 +126,12 @@ pnpm typecheck
 pnpm test
 cargo test --manifest-path src-tauri/Cargo.toml
 pnpm build
-pnpm tauri build --no-bundle
+pnpm tauri:build
 ```
 
-`pnpm tauri:build` 是无安装包桌面构建的别名。在签名和公证凭据准备好之前，
-暂不启用安装包构建。当前中性占位图标不是 DeepSeek 官方 Logo。
+`pnpm tauri:build` 会生成 macOS `.app` 和 `.dmg`。只有在调试或 CI 需要
+裸可执行文件时才使用 `pnpm tauri:build:binary`。当前中性占位图标不是
+DeepSeek 官方 Logo。
 
 ## 发布路线
 
@@ -130,7 +143,8 @@ pnpm tauri build --no-bundle
 
 正式发布前，需要配置 Apple Developer 签名、公证、updater 签名密钥和
 GitHub Actions 私有 secrets。凭据只应放在发布环境，不能提交到仓库。
-当前 CI 只构建未签名桌面二进制，不声称已经生成签名安装包。
+本地生成的应用包目前未签名；CI 编译任务仍使用无安装包构建，也不声称已经
+生成签名安装包。
 
 ## 仓库边界
 

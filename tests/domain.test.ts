@@ -48,6 +48,7 @@ describe("启动与更新决策", () => {
     expect(startBlocker(baseStatus)).toBeNull();
     expect(startBlocker({ ...baseStatus, port: 3080 })).toBe("portConflict");
     expect(startBlocker({ ...baseStatus, orphanedProcess: true })).toBe("orphanedProcess");
+    expect(startBlocker({ ...baseStatus, dependencies: [{ ...baseStatus.dependencies[0], available: false }] })).toBe("missingDependencies");
   });
 
   it("脏工作区默认中止，显式选择后才创建 stash", () => {
@@ -64,5 +65,10 @@ describe("启动与更新决策", () => {
     expect(machine.phase).toBe("failed");
     expect(machine.error).toContain("构建失败");
     expect(lmStudioSummary({ reachable: false, apiUrl: "http://127.0.0.1:1234/v1/models", models: [], error: "连接被拒绝", checkedAt: "" })).toBe("连接被拒绝");
+  });
+
+  it("禁止更新状态机回退到更早步骤", () => {
+    const machine = enterPhase(enterPhase(createUpdateMachine(), "checking"), "fetching");
+    expect(() => enterPhase(machine, "stopping")).toThrow("不能回退");
   });
 });
